@@ -42,18 +42,30 @@ def get_cosine(
     return cosine
 
 @torch.no_grad()
-def sim_mm_top_k(target_content_emb, uni_seq_content_emb, keep_top=50):
+def sim_mm_top_k(
+    target_content_emb,
+    uni_seq_content_emb,
+    keep_top=50,
+    eligible_mask=None,
+    return_invalid_mask=False,
+):
     q = torch.nn.functional.normalize(target_content_emb, dim=-1)
     k = torch.nn.functional.normalize(uni_seq_content_emb, dim=-1)
     qk = torch.bmm(q, k.transpose(-1, -2)).squeeze(1)
 
-    # to avoid fetch padding
-    zero_mask = (qk == 0.0)
-    qk = qk.masked_fill(zero_mask, -1.1)
+    if eligible_mask is None:
+        eligible_mask = qk != 0.0
+    else:
+        eligible_mask = eligible_mask.to(device=qk.device, dtype=torch.bool)
+        eligible_mask = eligible_mask & (qk != 0.0)
+    qk = qk.masked_fill(~eligible_mask, torch.finfo(qk.dtype).min)
 
     top_k_indices = torch.topk(qk, k=keep_top, dim=1, 
                            sorted=True, largest=True).indices
-    return top_k_indices
+    if not return_invalid_mask:
+        return top_k_indices
+    invalid_mask = ~eligible_mask.gather(1, top_k_indices)
+    return top_k_indices, invalid_mask
 
 @torch.no_grad()
 def sim_soft_top_k(target_emb, uni_seq_emb, W_a=None, W_b=None, keep_top=50):
@@ -210,4 +222,3 @@ def calc_auroc_gpu(tp, fp, tn, fn):
     ).sum()
 
     return auc.item()
-    

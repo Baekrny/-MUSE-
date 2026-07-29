@@ -44,7 +44,12 @@ def load_config(config_path):
 
 def create_model(args):
     if args["method"] in ["muse", "din", "sim-soft", "sim-hard"]:
-        return MUSE_DIN(args=args, D=args["embedding_dim"], UNI_STEPS=args["keep_top"])
+        return MUSE_DIN(
+            args=args,
+            D=args["embedding_dim"],
+            RT_STEPS=args.get("short_window", 50),
+            UNI_STEPS=args["keep_top"],
+        )
     else:
         raise ValueError(f"Unknown method: {args['method']}")
 

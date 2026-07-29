@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 
 from utils.utils import sim_mm_top_k, sim_hard_top_k, sim_soft_top_k, calc_auc_gpu, calc_gauc_gpu, write_info_to_file, _confusion_matrix_at_thresholds, calc_auroc_gpu
+from utils.horizon import build_eligible_mask, overlap_summary
 
 FEATURE_BLOCKS = {
     "ad": ["205", "206", "213", "214", "205_c"],
@@ -71,6 +72,7 @@ class Trainer:
         self._epoch_index = 0
         self._batch_index = 0
         self._total_steps = 0
+        self.eval_diagnostics = None
 
         # prepare id_count, assosiated with update_count() function
         # L = len(self.sparse_model.module.feature_maps["150_2_180"])
@@ -112,6 +114,9 @@ class Trainer:
                 self.log_metric(auc, gauc, loss_reduced.item(), train_loss, "Train")
 
             self._total_steps += 1
+            max_train_steps = self.args.get("max_train_steps")
+            if max_train_steps and batch_index + 1 >= max_train_steps:
+                break
         
         # log at last train step
         self.log_metric(auc, gauc, loss_reduced.item(), train_loss, "Train")
@@ -156,6 +161,15 @@ class Trainer:
             label=label
         )
 
+        if mode == "eval" and self.eval_diagnostics is not None:
+            dense_model = self.dense_model.module if hasattr(self.dense_model, "module") else self.dense_model
+            gate = getattr(dense_model, "last_horizon_gate", None)
+            if gate is not None:
+                gate = gate.detach().double()
+                self.eval_diagnostics[3] += gate.sum()
+                self.eval_diagnostics[4] += (gate * gate).sum()
+                self.eval_diagnostics[5] += gate.numel()
+
         accum_steps = 1
         loss = loss / accum_steps
 
@@ -176,9 +190,10 @@ class Trainer:
         return loss * accum_steps, metrics
     
     def transform_batch(self, batch):
-        # form 
-        short_seq_fn_id = batch["150_2_180"][:,-50:]
-        short_seq_fn_cate = batch["151_2_180"][:,-50:]
+        # form
+        short_window = self.args.get("short_window", 50)
+        short_seq_fn_id = batch["150_2_180"][:, -short_window:]
+        short_seq_fn_cate = batch["151_2_180"][:, -short_window:]
         batch["150_1_180"] = short_seq_fn_id
         batch["151_1_180"] = short_seq_fn_cate
 
@@ -197,6 +212,7 @@ class Trainer:
 
         eval_loss = 0
         self.init_metric()
+        self.eval_diagnostics = torch.zeros(6, dtype=torch.float64, device=self.device)
 
         if hasattr(self.test_dataloader.dataset, 'set_epoch'):
             self.test_dataloader.dataset.set_epoch(0)
@@ -216,9 +232,13 @@ class Trainer:
                 self.log_metric(auc, gauc, loss_reduced.item(), eval_loss, "Eval")
             
             self._total_steps += 1
+            max_eval_steps = self.args.get("max_eval_steps")
+            if max_eval_steps and batch_index + 1 >= max_eval_steps:
+                break
         
         # log at last eval step
         self.log_metric(auc, gauc, loss_reduced.item(), eval_loss, "Eval")
+        self.log_eval_diagnostics()
 
     @torch.no_grad()
     def apply_general_search(self, batch, keep_top=50):
@@ -247,13 +267,49 @@ class Trainer:
 
             target_content_emb = top_k_embs["205_c"].unsqueeze(1)
             uni_seq_content_emb = top_k_embs["150_2_180_c"]
-            top_k_indices = sim_mm_top_k(target_content_emb, uni_seq_content_emb, keep_top=keep_top)
+            eligible_mask = None
+            return_invalid_mask = False
+            if self.args["method"] == "muse":
+                valid_mask = batch["150_2_180"] != 0
+                eligible_mask = build_eligible_mask(
+                    valid_mask,
+                    short_window=self.args.get("short_window", 50),
+                    policy=self.args.get("long_history_policy", "overlap"),
+                )
+                return_invalid_mask = True
+            top_k_result = sim_mm_top_k(
+                target_content_emb,
+                uni_seq_content_emb,
+                keep_top=keep_top,
+                eligible_mask=eligible_mask,
+                return_invalid_mask=return_invalid_mask,
+            )
+            if return_invalid_mask:
+                top_k_indices, invalid_mask = top_k_result
+            else:
+                top_k_indices = top_k_result
             batch_indices = torch.arange(target_content_emb.shape[0], device=target_content_emb.device).unsqueeze(1).expand(-1, keep_top)
-            
+
             top_k_embs["150_2_180_c"] = top_k_embs["150_2_180_c"][batch_indices, top_k_indices]
+            if return_invalid_mask:
+                top_k_embs["150_2_180_c"][invalid_mask] = 0
 
             for fn in ["150_2_180", "151_2_180"]:
                 batch[fn] = batch[fn][batch_indices, top_k_indices]
+                if return_invalid_mask:
+                    batch[fn][invalid_mask] = 0
+
+            if return_invalid_mask and self.args.get("collect_retrieval_diagnostics", False):
+                self.last_overlap_summary = overlap_summary(
+                    top_k_indices,
+                    valid_mask,
+                    recent_window=self.args.get("short_window", 50),
+                    invalid_mask=invalid_mask,
+                )
+                if self.eval_diagnostics is not None:
+                    self.eval_diagnostics[0] += self.last_overlap_summary["recent_count"]
+                    self.eval_diagnostics[1] += self.last_overlap_summary["selected_count"]
+                    self.eval_diagnostics[2] += self.last_overlap_summary["expected_recent_count"]
 
         elif self.args["method"] in ["sim-soft"]:
             top_k_fn = ["205", "206", "150_2_180", "151_2_180"]
@@ -294,6 +350,30 @@ class Trainer:
             raise NotImplementedError
 
         return batch, top_k_embs
+
+    def log_eval_diagnostics(self):
+        if self.eval_diagnostics is None:
+            return
+        diagnostics = self.eval_diagnostics.clone()
+        if self.world_size > 1:
+            dist.all_reduce(diagnostics, op=dist.ReduceOp.SUM)
+        if not self.is_main_process:
+            return
+        recent, selected, expected, gate_sum, gate_square_sum, gate_count = diagnostics.tolist()
+        if selected > 0:
+            logging.info(
+                "[Diagnostics] RecentOverlap=%.6f RecentEnrichment=%.6f",
+                recent / selected,
+                recent / max(expected, 1e-12),
+            )
+        if gate_count > 0:
+            gate_mean = gate_sum / gate_count
+            gate_variance = max(gate_square_sum / gate_count - gate_mean * gate_mean, 0.0)
+            logging.info(
+                "[Diagnostics] HorizonGateMean=%.6f HorizonGateStd=%.6f",
+                gate_mean,
+                gate_variance ** 0.5,
+            )
 
     def init_metric(self):
         self.accumulated_metric = {

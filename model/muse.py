@@ -7,6 +7,7 @@ import torch.distributed as dist
 
 from model.base_model.simtier import cosine_simtier_list
 from model.base_model.layers import multi_head_att, multi_head_att_v2, fc_repeats
+from model.base_model.horizon_gate import ScalarHorizonGate
 
 from utils.utils import clip_prop, write_info_to_file
 
@@ -27,9 +28,20 @@ class MUSE_DIN(torch.nn.Module):
             dim_list=[1, 1],
         )
 
-        self.realtime_att = multi_head_att(
-            2 * self.D, 2 * self.D, [2 * self.D], [2 * self.D]
-        )
+        self.use_short_sa_ta = self.args.get("use_short_sa_ta", False)
+        self.use_horizon_gate = self.args.get("use_horizon_gate", False)
+        if self.use_short_sa_ta:
+            self.realtime_att = multi_head_att_v2(
+                2 * self.D,
+                2 * self.D,
+                [2 * self.D],
+                [2 * self.D],
+                attn_score_cross=True,
+            )
+        else:
+            self.realtime_att = multi_head_att(
+                2 * self.D, 2 * self.D, [2 * self.D], [2 * self.D]
+            )
         self.attn_score_cross = True # whether to use SA-TA
         self.uni_att_v2 = multi_head_att_v2(
             2 * self.D, 2 * self.D, [2 * self.D], [2 * self.D], attn_score_cross=self.attn_score_cross
@@ -44,6 +56,9 @@ class MUSE_DIN(torch.nn.Module):
 
         # D * (3+4) + D//2 * 3 + 2 * 2 * (D*2) + 22 * 2
         self.fc_tower = fc_repeats(15 * self.D + 3 * (self.D // 2) + 44, shape=[256, 128, 64, 2], acts=['dice', 'dice', 'dice', 'dice', 'dice', None])
+
+        if self.use_horizon_gate:
+            self.horizon_gate = ScalarHorizonGate(interest_dim=2 * self.D, hidden_dim=2 * self.D)
         
         self.use_aux_loss = self.args["use_aux_loss"]
         if self.use_aux_loss:
@@ -120,7 +135,14 @@ class MUSE_DIN(torch.nn.Module):
             [-1, 1, 2 * self.D],
         )
 
-        rt_att_out = self.realtime_att(att_ad_2, rt_att)
+        if self.use_short_sa_ta:
+            rt_att_out = self.realtime_att(
+                att_ad_2,
+                rt_att,
+                mm_cosine=[all_seq_image_res[0][0]],
+            )
+        else:
+            rt_att_out = self.realtime_att(att_ad_2, rt_att)
 
         # use DIN for ESU
         uni_seq_att_out_v2 = self.uni_att_v2(att_ad_2, uni_seq_att_v2, mm_cosine=[all_seq_image_res[0][1]])
@@ -150,6 +172,17 @@ class MUSE_DIN(torch.nn.Module):
             uni_seq_att_v2 = torch.zeros_like(uni_seq_att_v2).detach()
             uni_seq_att_out_v2 = torch.zeros_like(uni_seq_att_out_v2).detach()
             all_seq_image_res[1][1] = torch.zeros_like(all_seq_image_res[1][1]).detach()
+
+        if self.use_horizon_gate:
+            short_interest, long_interest, self.last_horizon_gate = self.horizon_gate(
+                att_ad_2.squeeze(1),
+                rt_att_out,
+                uni_seq_att_out_v2,
+            )
+            rt_att_out = short_interest
+            uni_seq_att_out_v2 = long_interest
+        else:
+            self.last_horizon_gate = None
 
         # ablate rt_seq
         # rt_att = torch.zeros_like(rt_att).detach()
@@ -197,6 +230,8 @@ class MUSE_DIN(torch.nn.Module):
             'uni_att_v2': self.uni_att_v2.state_dict(),
             'fc_tower': self.fc_tower.state_dict()
         }
+        if self.use_horizon_gate:
+            state_dict['horizon_gate'] = self.horizon_gate.state_dict()
 
         # os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
         torch.save(state_dict, ckpt_path)
@@ -218,6 +253,10 @@ class MUSE_DIN(torch.nn.Module):
         self.realtime_att.load_state_dict(ckpt['realtime_att'])
         self.uni_att_v2.load_state_dict(ckpt['uni_att_v2'])
         self.fc_tower.load_state_dict(ckpt['fc_tower'])
+        if self.use_horizon_gate:
+            if 'horizon_gate' not in ckpt:
+                raise KeyError("Enhanced checkpoint is missing horizon_gate state")
+            self.horizon_gate.load_state_dict(ckpt['horizon_gate'])
 
         logging.info(f"[Rank {device_id}] Checkpoint loaded from {ckpt_path}")
         return self
