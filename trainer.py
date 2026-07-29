@@ -9,6 +9,31 @@ import torch.distributed as dist
 from utils.utils import sim_mm_top_k, sim_hard_top_k, sim_soft_top_k, calc_auc_gpu, calc_gauc_gpu, write_info_to_file, _confusion_matrix_at_thresholds, calc_auroc_gpu
 from utils.horizon import build_eligible_mask, overlap_summary
 
+def masked_relevance_topk(score, valid, keep_top):
+    valid = valid.to(device=score.device, dtype=torch.bool)
+    score_order = torch.argsort(score, dim=1, descending=True, stable=True)
+    ordered_valid = valid.gather(1, score_order)
+    valid_order = torch.argsort(
+        ordered_valid.to(torch.uint8), dim=1, descending=True, stable=True
+    )
+    indices = score_order.gather(1, valid_order)[:, :keep_top]
+    invalid = ~valid.gather(1, indices)
+    return indices, invalid
+
+def cp_relevance_topk(
+    attention,
+    query,
+    fact,
+    valid,
+    mm_cosine=None,
+    keep_top=50,
+):
+    raw_score = attention.raw_relevance_logits(
+        query, fact, mask=valid, mm_cosine=mm_cosine
+    )
+    score = raw_score.squeeze(-1).mean(dim=1)
+    return masked_relevance_topk(score, valid, keep_top)
+
 def prepare_checkpoint_dir(path):
     os.makedirs(path, exist_ok=True)
 
@@ -252,7 +277,89 @@ class Trainer:
     @torch.no_grad()
     def apply_general_search(self, batch, keep_top=50):
         top_k_embs = dict()
-        if self.args["method"] in ["muse", "din"]:
+        if self.args["method"] == "cp-muse":
+            retrieval_fn = [
+                "205",
+                "206",
+                "205_c",
+                "150_2_180",
+                "151_2_180",
+                "150_2_180_c",
+            ]
+            retrieval_embs = self.sparse_model(
+                {fn: batch[fn] for fn in retrieval_fn}
+            )
+
+            query = torch.cat(
+                [retrieval_embs["205"], retrieval_embs["206"]], dim=-1
+            ).unsqueeze(1)
+            fact = torch.cat(
+                [
+                    retrieval_embs["150_2_180"],
+                    retrieval_embs["151_2_180"],
+                ],
+                dim=-1,
+            )
+            target_content_emb = retrieval_embs["205_c"].unsqueeze(1)
+            uni_seq_content_emb = retrieval_embs["150_2_180_c"]
+            target_content_norm = torch.nn.functional.normalize(
+                target_content_emb, dim=-1
+            )
+            uni_seq_content_norm = torch.nn.functional.normalize(
+                uni_seq_content_emb, dim=-1
+            )
+            mm_cosine = torch.bmm(
+                target_content_norm, uni_seq_content_norm.transpose(-1, -2)
+            ).squeeze(1)
+
+            valid_mask = batch["150_2_180"] != 0
+            eligible_mask = build_eligible_mask(
+                valid_mask,
+                short_window=self.args.get("short_window", 50),
+                policy=self.args.get("long_history_policy", "overlap"),
+            )
+            dense_model = (
+                self.dense_model.module
+                if hasattr(self.dense_model, "module")
+                else self.dense_model
+            )
+            top_k_indices, invalid_mask = cp_relevance_topk(
+                dense_model.uni_att_v2,
+                query,
+                fact,
+                eligible_mask,
+                mm_cosine=[mm_cosine],
+                keep_top=keep_top,
+            )
+            batch_indices = torch.arange(
+                query.shape[0], device=query.device
+            ).unsqueeze(1).expand(-1, keep_top)
+
+            top_k_embs["205_c"] = retrieval_embs["205_c"]
+            top_k_embs["150_2_180_c"] = uni_seq_content_emb[
+                batch_indices, top_k_indices
+            ]
+            top_k_embs["150_2_180_c"][invalid_mask] = 0
+            del batch["205_c"]
+            del batch["150_2_180_c"]
+
+            for fn in ["150_2_180", "151_2_180"]:
+                batch[fn] = batch[fn][batch_indices, top_k_indices]
+                batch[fn][invalid_mask] = 0
+
+            if self.args.get("collect_retrieval_diagnostics", False):
+                self.last_overlap_summary = overlap_summary(
+                    top_k_indices,
+                    valid_mask,
+                    recent_window=self.args.get("short_window", 50),
+                    invalid_mask=invalid_mask,
+                )
+                if self.eval_diagnostics is not None:
+                    self.eval_diagnostics[0] += self.last_overlap_summary["recent_count"]
+                    self.eval_diagnostics[1] += self.last_overlap_summary["selected_count"]
+                    self.eval_diagnostics[2] += self.last_overlap_summary["expected_recent_count"]
+
+        elif self.args["method"] in ["muse", "din"]:
             # GSU of MUSE
             top_k_fn = ["205_c", "150_2_180_c"]
             for fn in top_k_fn:

@@ -1,0 +1,5 @@
+{
+    "exp_name": "cp_muse_dev_1pct",
+    "method": "cp-muse",
+    "collect_retrieval_diagnostics": true
+}

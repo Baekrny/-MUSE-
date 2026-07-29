@@ -86,7 +86,7 @@ def load_eval_checkpoint_models(dense_model, sparse_model, paths, use_ddp):
     load_warm_start_or_cleanup(dense_model, sparse_model, paths)
 
 def create_model(args):
-    if args["method"] in ["muse", "din", "sim-soft", "sim-hard"]:
+    if args["method"] in ["muse", "cp-muse", "din", "sim-soft", "sim-hard"]:
         return MUSE_DIN(
             args=args,
             D=args["embedding_dim"],

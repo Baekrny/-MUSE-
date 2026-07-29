@@ -3,6 +3,7 @@ from unittest.mock import patch
 import torch
 
 from model.base_model.layers import MultiHeadAttV2
+from trainer import cp_relevance_topk, masked_relevance_topk
 
 
 def test_calc_attn_score_matches_shared_multimodal_logits():
@@ -78,3 +79,50 @@ def test_forward_calls_the_shared_raw_relevance_api():
     for parameter in layer.parameters():
         if parameter.grad is not None:
             assert torch.isfinite(parameter.grad).all()
+
+
+def test_masked_relevance_topk_never_returns_padding():
+    score = torch.tensor([[0.1, 9.0, 0.8, 0.7]])
+    valid = torch.tensor([[True, False, True, True]])
+
+    indices, invalid = masked_relevance_topk(score, valid, keep_top=3)
+
+    torch.testing.assert_close(indices, torch.tensor([[2, 3, 0]]))
+    assert not invalid.any()
+
+    padded_indices, padded_invalid = masked_relevance_topk(
+        score, valid, keep_top=4
+    )
+
+    assert padded_invalid[0, -1]
+    assert padded_indices[0, -1] == 1
+    assert not valid.gather(1, padded_indices)[padded_invalid].any()
+
+
+def test_cp_relevance_topk_uses_shared_raw_score():
+    class FakeAttention:
+        def __init__(self):
+            self.calls = []
+
+        def raw_relevance_logits(self, query, fact, mask=None, mm_cosine=None):
+            self.calls.append((query, fact, mask, mm_cosine))
+            return torch.tensor([[[[1.0], [9.0], [4.0], [3.0]]]])
+
+    attention = FakeAttention()
+    query = torch.randn(1, 1, 4)
+    fact = torch.randn(1, 4, 4)
+    mm = [torch.randn(1, 4)]
+    valid = torch.tensor([[True, False, True, True]])
+
+    indices, invalid = cp_relevance_topk(
+        attention, query, fact, valid, mm_cosine=mm, keep_top=2
+    )
+
+    assert len(attention.calls) == 1
+    called_query, called_fact, called_mask, called_mm = attention.calls[0]
+    assert called_query is query
+    assert called_fact is fact
+    assert called_mask is valid
+    assert called_mm is mm
+    torch.testing.assert_close(indices, torch.tensor([[2, 3]]))
+    assert not invalid.any()
