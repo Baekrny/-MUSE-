@@ -8,7 +8,7 @@ import torch.distributed as dist
 from model.base_model.simtier import cosine_simtier_list
 from model.base_model.layers import multi_head_att, multi_head_att_v2, fc_repeats
 from model.base_model.horizon_gate import ScalarHorizonGate
-from model.base_model.longer_lite import GroupPoolTA
+from model.base_model.longer_lite import GroupPoolTA, InnerTransTA
 
 from utils.utils import clip_prop, write_info_to_file
 
@@ -68,6 +68,17 @@ class MUSE_DIN(torch.nn.Module):
                 model_dim=self.args.get("longer_model_dim", 2 * self.D),
                 max_len=1000,
                 group_size=self.args.get("longer_group_size", 4),
+            )
+        elif self.longer_variant == "inner-trans":
+            self.longer_lite = InnerTransTA(
+                input_dim=160,
+                model_dim=self.args.get("longer_model_dim", 2 * self.D),
+                max_len=1000,
+                group_size=self.args.get("longer_group_size", 4),
+                num_heads=self.args.get("longer_num_heads", 1),
+                transform_chunk_size=self.args.get(
+                    "longer_transform_chunk_size", 50000
+                ),
             )
         
         self.use_aux_loss = self.args["use_aux_loss"]
@@ -184,9 +195,9 @@ class MUSE_DIN(torch.nn.Module):
             uni_seq_att_out_v2 = torch.zeros_like(uni_seq_att_out_v2).detach()
             all_seq_image_res[1][1] = torch.zeros_like(all_seq_image_res[1][1]).detach()
 
-        if self.longer_variant == "group-pool":
+        if self.longer_variant in ("group-pool", "inner-trans"):
             if full_seq_embs is None:
-                raise ValueError("group-pool requires full_seq_embs")
+                raise ValueError(f"{self.longer_variant} requires full_seq_embs")
             full_target = torch.cat(
                 [
                     full_seq_embs["target_item"],

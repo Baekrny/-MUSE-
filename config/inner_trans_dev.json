@@ -1,0 +1,8 @@
+{
+    "exp_name": "inner_trans_dev_1pct",
+    "method": "muse",
+    "longer_variant": "inner-trans",
+    "longer_group_size": 4,
+    "longer_model_dim": 32,
+    "longer_num_heads": 1
+}
