@@ -237,10 +237,10 @@ class MUSE_DIN(torch.nn.Module):
         torch.save(state_dict, ckpt_path)
         logging.info(f"Checkpoint saved to {ckpt_path}")
     
-    def load_ckpt(self, ckpt_path: str, map_location=None):
+    def load_ckpt(self, ckpt_path: str, map_location=None, synchronize=True):
         if not os.path.exists(ckpt_path):
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-        if dist.is_available() and dist.is_initialized():
+        if synchronize and dist.is_available() and dist.is_initialized():
             dist.barrier()
 
         device_id = torch.cuda.current_device()

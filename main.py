@@ -42,6 +42,49 @@ def load_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+def validate_warm_start_paths(args):
+    if isinstance(args, dict):
+        dense_path = args.get("warm_start_dense_ckpt")
+        sparse_path = args.get("warm_start_sparse_ckpt")
+    else:
+        dense_path = getattr(args, "warm_start_dense_ckpt", None)
+        sparse_path = getattr(args, "warm_start_sparse_ckpt", None)
+
+    if bool(dense_path) != bool(sparse_path):
+        raise ValueError("dense and sparse warm-start checkpoints must be provided together")
+    if not dense_path:
+        return None
+
+    dense_path = str(dense_path)
+    sparse_path = str(sparse_path)
+    if not os.path.isfile(dense_path):
+        raise FileNotFoundError(f"dense warm-start checkpoint not found: {dense_path}")
+    if not os.path.isfile(sparse_path):
+        raise FileNotFoundError(f"sparse warm-start checkpoint not found: {sparse_path}")
+    return dense_path, sparse_path
+
+def destroy_process_group_if_initialized():
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
+
+def load_warm_start_models(dense_model, sparse_model, paths):
+    dense_path, sparse_path = paths
+    dense_model.load_ckpt(dense_path, synchronize=False)
+    sparse_model.load_ckpt(sparse_path, synchronize=False)
+
+def load_warm_start_or_cleanup(dense_model, sparse_model, paths):
+    try:
+        load_warm_start_models(dense_model, sparse_model, paths)
+    except BaseException:
+        destroy_process_group_if_initialized()
+        raise
+
+def load_eval_checkpoint_models(dense_model, sparse_model, paths, use_ddp):
+    if use_ddp:
+        dense_model = dense_model.module
+        sparse_model = sparse_model.module
+    load_warm_start_or_cleanup(dense_model, sparse_model, paths)
+
 def create_model(args):
     if args["method"] in ["muse", "din", "sim-soft", "sim-hard"]:
         return MUSE_DIN(
@@ -118,6 +161,17 @@ def train_and_eval_ddp(args, use_ddp=True):
     )
     din_model = create_model(args)
 
+    if use_ddp:
+        embedding_layer = embedding_layer.to(rank)
+        din_model = din_model.to(rank)
+    else:
+        embedding_layer = embedding_layer.cuda()
+        din_model = din_model.cuda()
+
+    warm_start_paths = validate_warm_start_paths(args)
+    if warm_start_paths:
+        load_warm_start_or_cleanup(din_model, embedding_layer, warm_start_paths)
+
     dense_params = (
         [p for p in embedding_layer.get_dense_parameters() if p.requires_grad] +
         [p for p in din_model.parameters() if p.requires_grad]
@@ -129,13 +183,8 @@ def train_and_eval_ddp(args, use_ddp=True):
     sparse_opt = optim.SparseAdam(sparse_params, lr=args["sparse_lr"])
 
     if use_ddp:
-        embedding_layer = embedding_layer.to(rank)
-        din_model = din_model.to(rank)
         embedding_layer = DDP(embedding_layer, device_ids=[rank], output_device=rank, find_unused_parameters=True)
         din_model = DDP(din_model, device_ids=[rank], output_device=rank, find_unused_parameters=True)
-    else:
-        embedding_layer = embedding_layer.cuda()
-        din_model = din_model.cuda()
     
     # Trainer
     trainer = Trainer(
@@ -158,7 +207,7 @@ def train_and_eval_ddp(args, use_ddp=True):
         print(f"Rank {rank} caught exception:")
         raise e
     finally:
-        dist.destroy_process_group()
+        destroy_process_group_if_initialized()
     
     if rank == 0:
         logging.info("Training finished")
@@ -250,16 +299,17 @@ def eval_ddp(args, use_ddp=True):
         embedding_layer = DDP(embedding_layer, device_ids=[rank], output_device=rank, find_unused_parameters=True)
         din_model = DDP(din_model, device_ids=[rank], output_device=rank, find_unused_parameters=True)
 
-        din_model.module.load_ckpt(dense_ckpt_path)
-        embedding_layer.module.load_ckpt(sparse_ckpt_path)
-
         # embedding_layer.module.filter_low_freq_id()
     else:
         embedding_layer = embedding_layer.cuda()
         din_model = din_model.cuda()
 
-        din_model.load_ckpt(dense_ckpt_path)
-        embedding_layer.load_ckpt(sparse_ckpt_path)
+    load_eval_checkpoint_models(
+        din_model,
+        embedding_layer,
+        (dense_ckpt_path, sparse_ckpt_path),
+        use_ddp,
+    )
 
     # Trainer
     trainer = Trainer(
@@ -282,12 +332,12 @@ def eval_ddp(args, use_ddp=True):
         print(f"Rank {rank} caught exception:")
         raise e
     finally:
-        dist.destroy_process_group()
+        destroy_process_group_if_initialized()
     
     if rank == 0:
         logging.info("Evaluation finished")
 
-def main():
+def build_arg_parser():
     parser = argparse.ArgumentParser(description="Train or evaluate model with config and CLI override.")
 
     parser.add_argument(
@@ -311,7 +361,23 @@ def main():
     parser.add_argument('--exp_name', type=str, help='Exp name')
     parser.add_argument('--shuffle', action='store_true', help='Shuffle data')
     parser.add_argument('--shuffle_buffer_size', type=int, help='Shuffle buffer size')
-    parser.add_argument('--use_ddp', action='store_true', help='Use DDP for distributed training')
+    parser.add_argument('--use_ddp', action='store_true', default=None, help='Use DDP for distributed training')
+
+    return parser
+
+def run_job(config):
+    try:
+        if config["job_type"] == "train":
+            train_and_eval_ddp(args=config, use_ddp=config["use_ddp"])
+        elif config["job_type"] == "eval":
+            eval_ddp(args=config, use_ddp=config["use_ddp"])
+        else:
+            raise ValueError(f"Unknown job type: {config['job_type']}")
+    finally:
+        destroy_process_group_if_initialized()
+
+def main():
+    parser = build_arg_parser()
 
     args, remaining = parser.parse_known_args()
 
@@ -328,12 +394,7 @@ def main():
     
     init_logging()
 
-    if config["job_type"] == "train":
-        train_and_eval_ddp(args=config, use_ddp=config["use_ddp"])
-    elif config["job_type"] == "eval":
-        eval_ddp(args=config, use_ddp=config["use_ddp"])
-    else:
-        raise ValueError(f"Unknown job type: {config['job_type']}")
+    run_job(config)
 
 if __name__ == "__main__":
     main()
