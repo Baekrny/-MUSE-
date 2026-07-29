@@ -16,6 +16,7 @@
 | CP-MUSE | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.582923 | 0.606226 | 0.391254 | N/M | 6.10 | logs/cp_muse_dev_1pct.log |
 | GroupPool-TA | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.582925 | 0.606261 | 0.391452 | 17.24* | 5.59 | logs/group_pool_dev_1pct.log |
 | InnerTrans-TA | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.582953 | 0.606369 | 0.391422 | 19.99* | 5.80 | logs/inner_trans_dev_1pct_retry1.log |
+| GlobalToken-LongerLite | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.583169 | 0.606336 | 0.391455 | 19.69* | 6.24 | logs/global_token_dev_1pct.log |
 
 N/M = not measured. `17.24*` is the highest sampled per-GPU allocation from `nvidia-smi`, not a profiler-derived peak.
 
@@ -34,9 +35,12 @@ The failed InnerTrans pre-run `logs/inner_trans_dev_1pct.log` hit a CUDA SDPA ke
 | ETA exploration | CP-MUSE -0.000248 vs 100-step MUSE continuation | Passes the pre-registered -0.0005 gate; retain the ETA-style efficiency ablation. |
 | GroupPool-TA | -0.000246 vs 100-step MUSE continuation | Keep as a runnable LONGER-inspired compression baseline; proceed to the pre-registered InnerTrans comparison. |
 | GlobalToken exploration | InnerTrans-TA -0.000218 vs 100-step MUSE continuation | Passes the pre-registered -0.001 gate; retain the GlobalToken ablation. |
+| GlobalToken result | -0.000002 vs 100-step MUSE continuation | Numerically matches the control; keep as the most stable LONGER-inspired variant without claiming an accuracy gain. |
 
 CP-MUSE used the same train/evaluation budget as the short continuation control. Its retrieval diagnostics were `RecentOverlap=0.102177` and `RecentEnrichment=1.903319`, showing that the shared SA-TA scorer concentrates selected candidates in the recent window more strongly than its prevalence in the eligible history. This is a retrieval-distribution observation, not evidence of an accuracy gain.
 
 GroupPool-TA adds 42,305 dense parameters and compresses the full 1,000-event history into 250 grouped tokens before target attention. It completed on 2 x RTX 4090 without OOM; its near-zero GAUC delta supports using it as the controlled base for the InnerTrans ablation, not claiming an accuracy improvement.
 
 InnerTrans-TA adds 50,849 dense parameters in total and applies one shared local Transformer layer independently inside each four-event group before pooling. It remained within an observed 19.99 GB per GPU and produced the best GAUC among the three adaptations, but its delta against the short MUSE continuation remained negative.
+
+GlobalToken-LongerLite adds 71,137 dense parameters in total. Target, user, CLS, and the most recent 100 merged tokens read all 250 history tokens, while the history representation never reads target or user features. Its GAUC matched the control to six decimal places; because the branch uses a zero-initialized residual scale, this result demonstrates stable integration and directional full-history access, not a proven accuracy contribution from the new branch.

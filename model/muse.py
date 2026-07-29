@@ -8,7 +8,11 @@ import torch.distributed as dist
 from model.base_model.simtier import cosine_simtier_list
 from model.base_model.layers import multi_head_att, multi_head_att_v2, fc_repeats
 from model.base_model.horizon_gate import ScalarHorizonGate
-from model.base_model.longer_lite import GroupPoolTA, InnerTransTA
+from model.base_model.longer_lite import (
+    GlobalTokenLongerLite,
+    GroupPoolTA,
+    InnerTransTA,
+)
 
 from utils.utils import clip_prop, write_info_to_file
 
@@ -75,6 +79,19 @@ class MUSE_DIN(torch.nn.Module):
                 model_dim=self.args.get("longer_model_dim", 2 * self.D),
                 max_len=1000,
                 group_size=self.args.get("longer_group_size", 4),
+                num_heads=self.args.get("longer_num_heads", 1),
+                transform_chunk_size=self.args.get(
+                    "longer_transform_chunk_size", 50000
+                ),
+            )
+        elif self.longer_variant == "global-token":
+            self.longer_lite = GlobalTokenLongerLite(
+                input_dim=160,
+                user_dim=3 * self.D + 3 * (self.D // 2),
+                model_dim=self.args.get("longer_model_dim", 2 * self.D),
+                max_len=1000,
+                group_size=self.args.get("longer_group_size", 4),
+                recent_queries=self.args.get("longer_recent_queries", 100),
                 num_heads=self.args.get("longer_num_heads", 1),
                 transform_chunk_size=self.args.get(
                     "longer_transform_chunk_size", 50000
@@ -195,7 +212,7 @@ class MUSE_DIN(torch.nn.Module):
             uni_seq_att_out_v2 = torch.zeros_like(uni_seq_att_out_v2).detach()
             all_seq_image_res[1][1] = torch.zeros_like(all_seq_image_res[1][1]).detach()
 
-        if self.longer_variant in ("group-pool", "inner-trans"):
+        if self.longer_variant in ("group-pool", "inner-trans", "global-token"):
             if full_seq_embs is None:
                 raise ValueError(f"{self.longer_variant} requires full_seq_embs")
             full_target = torch.cat(
@@ -214,11 +231,19 @@ class MUSE_DIN(torch.nn.Module):
                 ],
                 dim=-1,
             )
-            full_history_interest = self.longer_lite(
-                full_target,
-                full_history,
-                full_seq_embs["valid_mask"],
-            )
+            if self.longer_variant == "global-token":
+                full_history_interest = self.longer_lite(
+                    full_target,
+                    user,
+                    full_history,
+                    full_seq_embs["valid_mask"],
+                )
+            else:
+                full_history_interest = self.longer_lite(
+                    full_target,
+                    full_history,
+                    full_seq_embs["valid_mask"],
+                )
             uni_seq_att_out_v2 = self.longer_lite.combine_interest(
                 uni_seq_att_out_v2, full_history_interest
             )

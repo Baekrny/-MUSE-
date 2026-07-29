@@ -1,0 +1,9 @@
+{
+    "exp_name": "global_token_dev_1pct",
+    "method": "muse",
+    "longer_variant": "global-token",
+    "longer_group_size": 4,
+    "longer_model_dim": 32,
+    "longer_num_heads": 1,
+    "longer_recent_queries": 100
+}

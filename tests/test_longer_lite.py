@@ -1,6 +1,10 @@
 import torch
 
-from model.base_model.longer_lite import GroupPoolTA, InnerTransTA
+from model.base_model.longer_lite import (
+    GlobalTokenLongerLite,
+    GroupPoolTA,
+    InnerTransTA,
+)
 
 
 def test_group_pool_is_mask_aware_and_zeroes_all_padding_groups():
@@ -80,3 +84,34 @@ def test_inner_trans_merges_independent_groups_and_zeroes_padding():
     assert torch.isfinite(merged).all()
     assert len(transform_batch_sizes) >= 2
     assert max(transform_batch_sizes) <= 2
+
+
+def test_global_token_cross_attention_uses_queries_over_merged_history():
+    model = GlobalTokenLongerLite(
+        input_dim=4,
+        user_dim=6,
+        model_dim=4,
+        max_len=8,
+        group_size=2,
+        recent_queries=2,
+        num_heads=2,
+        transform_chunk_size=2,
+    )
+    model.eval()
+    attention_lengths = []
+
+    def record_attention_lengths(_, inputs):
+        query, key, value = inputs[:3]
+        attention_lengths.append((query.shape[1], key.shape[1], value.shape[1]))
+
+    model.cross_attention.register_forward_pre_hook(record_attention_lengths)
+    target = torch.randn(2, 4)
+    user = torch.randn(2, 6)
+    history = torch.randn(2, 8, 4)
+    valid = torch.ones(2, 8, dtype=torch.bool)
+
+    output = model(target, user, history, valid)
+
+    assert attention_lengths == [(5, 4, 4)]
+    assert output.shape == (2, 4)
+    assert torch.isfinite(output).all()
