@@ -172,6 +172,10 @@ class Trainer:
         # step 1: transform batch
         batch = self.transform_batch(batch)
 
+        full_seq_embs = None
+        if self.args.get("longer_variant"):
+            full_seq_embs = self.prepare_full_seq_embs(batch)
+
         # step 2: apply GSU
         batch, batch_embs = self.apply_general_search(batch, keep_top=self.keep_top)
 
@@ -192,7 +196,8 @@ class Trainer:
             ad_embs=emb_block["ad"],
             uni_seq_embs=emb_block["uni_seq_fn"],
             short_seq_fn=emb_block["short_seq_fn"],
-            label=label
+            label=label,
+            full_seq_embs=full_seq_embs,
         )
 
         if mode == "eval" and self.eval_diagnostics is not None:
@@ -222,6 +227,29 @@ class Trainer:
         metrics["gauc"], metrics["weighted_auc_sum"], metrics["impression_counts"] = calc_gauc_gpu(label, prop, uids)
         metrics["tp"], metrics["fp"], metrics["tn"], metrics["fn"] = _confusion_matrix_at_thresholds(label, prop, self.thresholds)
         return loss * accum_steps, metrics
+
+    @torch.no_grad()
+    def prepare_full_seq_embs(self, batch):
+        feature_names = [
+            "205",
+            "206",
+            "205_c",
+            "150_2_180",
+            "151_2_180",
+            "150_2_180_c",
+        ]
+        embeddings = self.sparse_model(
+            {name: batch[name] for name in feature_names}
+        )
+        return {
+            "target_item": embeddings["205"],
+            "target_category": embeddings["206"],
+            "target_scl": embeddings["205_c"],
+            "history_item": embeddings["150_2_180"],
+            "history_category": embeddings["151_2_180"],
+            "history_scl": embeddings["150_2_180_c"],
+            "valid_mask": batch["150_2_180"] != 0,
+        }
     
     def transform_batch(self, batch):
         # form

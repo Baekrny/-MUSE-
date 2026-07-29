@@ -1,0 +1,7 @@
+{
+    "exp_name": "group_pool_dev_1pct",
+    "method": "muse",
+    "longer_variant": "group-pool",
+    "longer_group_size": 4,
+    "longer_model_dim": 32
+}

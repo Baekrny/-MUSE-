@@ -8,6 +8,7 @@ import torch.distributed as dist
 from model.base_model.simtier import cosine_simtier_list
 from model.base_model.layers import multi_head_att, multi_head_att_v2, fc_repeats
 from model.base_model.horizon_gate import ScalarHorizonGate
+from model.base_model.longer_lite import GroupPoolTA
 
 from utils.utils import clip_prop, write_info_to_file
 
@@ -59,6 +60,15 @@ class MUSE_DIN(torch.nn.Module):
 
         if self.use_horizon_gate:
             self.horizon_gate = ScalarHorizonGate(interest_dim=2 * self.D, hidden_dim=2 * self.D)
+
+        self.longer_variant = self.args.get("longer_variant")
+        if self.longer_variant == "group-pool":
+            self.longer_lite = GroupPoolTA(
+                input_dim=160,
+                model_dim=self.args.get("longer_model_dim", 2 * self.D),
+                max_len=1000,
+                group_size=self.args.get("longer_group_size", 4),
+            )
         
         self.use_aux_loss = self.args["use_aux_loss"]
         if self.use_aux_loss:
@@ -76,7 +86,8 @@ class MUSE_DIN(torch.nn.Module):
         ad_embs,
         uni_seq_embs,
         short_seq_fn,
-        label
+        label,
+        full_seq_embs=None,
     ):
         
         item_content = torch.reshape(ad_embs[-1], [-1, 1, 128])
@@ -173,6 +184,34 @@ class MUSE_DIN(torch.nn.Module):
             uni_seq_att_out_v2 = torch.zeros_like(uni_seq_att_out_v2).detach()
             all_seq_image_res[1][1] = torch.zeros_like(all_seq_image_res[1][1]).detach()
 
+        if self.longer_variant == "group-pool":
+            if full_seq_embs is None:
+                raise ValueError("group-pool requires full_seq_embs")
+            full_target = torch.cat(
+                [
+                    full_seq_embs["target_item"],
+                    full_seq_embs["target_category"],
+                    full_seq_embs["target_scl"],
+                ],
+                dim=-1,
+            )
+            full_history = torch.cat(
+                [
+                    full_seq_embs["history_item"],
+                    full_seq_embs["history_category"],
+                    full_seq_embs["history_scl"],
+                ],
+                dim=-1,
+            )
+            full_history_interest = self.longer_lite(
+                full_target,
+                full_history,
+                full_seq_embs["valid_mask"],
+            )
+            uni_seq_att_out_v2 = self.longer_lite.combine_interest(
+                uni_seq_att_out_v2, full_history_interest
+            )
+
         if self.use_horizon_gate:
             short_interest, long_interest, self.last_horizon_gate = self.horizon_gate(
                 att_ad_2.squeeze(1),
@@ -232,6 +271,8 @@ class MUSE_DIN(torch.nn.Module):
         }
         if self.use_horizon_gate:
             state_dict['horizon_gate'] = self.horizon_gate.state_dict()
+        if hasattr(self, 'longer_lite'):
+            state_dict['longer_lite'] = self.longer_lite.state_dict()
 
         # os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
         torch.save(state_dict, ckpt_path)
@@ -257,6 +298,14 @@ class MUSE_DIN(torch.nn.Module):
             if 'horizon_gate' not in ckpt:
                 raise KeyError("Enhanced checkpoint is missing horizon_gate state")
             self.horizon_gate.load_state_dict(ckpt['horizon_gate'])
+        if hasattr(self, 'longer_lite'):
+            if 'longer_lite' in ckpt:
+                self.longer_lite.load_state_dict(ckpt['longer_lite'])
+            else:
+                logging.info(
+                    "Checkpoint has no longer_lite state; keeping the "
+                    "zero-residual initialization"
+                )
 
         logging.info(f"[Rank {device_id}] Checkpoint loaded from {ckpt_path}")
         return self
