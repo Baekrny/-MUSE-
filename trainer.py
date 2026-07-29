@@ -9,6 +9,13 @@ import torch.distributed as dist
 from utils.utils import sim_mm_top_k, sim_hard_top_k, sim_soft_top_k, calc_auc_gpu, calc_gauc_gpu, write_info_to_file, _confusion_matrix_at_thresholds, calc_auroc_gpu
 from utils.horizon import build_eligible_mask, overlap_summary
 
+def prepare_checkpoint_dir(path):
+    os.makedirs(path, exist_ok=True)
+
+def synchronize_after_checkpoint():
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+
 FEATURE_BLOCKS = {
     "ad": ["205", "206", "213", "214", "205_c"],
     "user": ["129_1", "130_1", "130_2", "130_3", "130_4", "130_5"],
@@ -87,8 +94,10 @@ class Trainer:
             self._epoch_index = epoch
             self.train_epoch()
         
-        if "save_ckpt" in self.args and self.args["save_ckpt"] and self.rank == 0:
-            self.save_model()
+        if "save_ckpt" in self.args and self.args["save_ckpt"]:
+            if self.rank == 0:
+                self.save_model()
+            synchronize_after_checkpoint()
 
         self.eval()
 
@@ -500,6 +509,7 @@ class Trainer:
         else:
             ckpt_path = "./ckpt"
 
+        prepare_checkpoint_dir(ckpt_path)
         self.dense_model.module.save_ckpt(ckpt_path=os.path.join(ckpt_path, f"{self.args['exp_name']}_dense.ckpt"), rank=self.rank)
         self.sparse_model.module.save_ckpt(ckpt_path=os.path.join(ckpt_path, f"{self.args['exp_name']}_sparse.ckpt"), rank=self.rank)
         # torch.save(self.id_counts.cpu(), "id_counts.pt")
