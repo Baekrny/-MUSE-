@@ -24,3 +24,4 @@ The failed warm-up pre-run `logs/muse_warmup_dev_1pct.log` ended after training 
 | --- | --- | --- |
 | Official baselines | N/A | Completed; no gate applies |
 | Continuation stability | -0.035448 vs warm-up | Full equal-LR second epoch is consistent with overfitting on the 1% split; revise continuation schedule before architecture comparison. |
+| Adaptation schedule | pre-registered before CP/LONGER runs | Use 100 equal continuation steps from the common warm-up checkpoint; full 376-step equal-LR continuation degraded by -0.035448. |
