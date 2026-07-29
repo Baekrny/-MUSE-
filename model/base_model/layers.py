@@ -217,18 +217,20 @@ class MultiHeadAttV2(torch.nn.Module):
             torch.nn.init.constant_(self.cosine_tau1, 0.1)
             torch.nn.init.constant_(self.cosine_tau2, 1.0)
 
-    def forward(self, query: torch.Tensor, fact: torch.Tensor, mask: torch.Tensor = None, mm_cosine: torch.Tensor =None):
-        outs = []
+    def raw_relevance_logits(
+        self,
+        query: torch.Tensor,
+        fact: torch.Tensor,
+        mask: torch.Tensor = None,
+        mm_cosine: torch.Tensor = None,
+    ) -> torch.Tensor:
+        logits = []
         for k in range(self.heads):
             fc_query = self.query_layers[k](query)
             fc_query = fc_query * torch.nn.functional.sigmoid(fc_query)
             fc_fact = self.fact_layers[k](fact)
             fc_fact = fc_fact * torch.nn.functional.sigmoid(fc_fact)
-            fc_value = self.value_layers[k](fact)
-            fc_value = fc_value * torch.nn.functional.sigmoid(fc_value)
             dot = torch.matmul(fc_fact, fc_query.transpose(-1, -2))
-            if mask is not None:
-                dot += - 1e9 * (1-mask.unsqueeze(-1).float())
             if self.attn_score_cross and mm_cosine is not None:
                 if len(mm_cosine) > 1:
                     a_1 = self.cosine_tau1[0, k].view(1, -1)
@@ -244,27 +246,42 @@ class MultiHeadAttV2(torch.nn.Module):
                 b_2 = self.cosine_tau2[1, k].view(1, 1, 1)                
                 b_3 = self.cosine_tau2[2, k].view(1, 1, 1)
                 dot = b_1*dot + b_2*mm_attn_bias + b_3*dot*mm_attn_bias
-                # print('cosine_tau', self.cosine_tau1, self.cosine_tau2)
-                
-            alphas = torch.nn.functional.softmax(dot, dim=1) + 0.0000001
+            if mask is not None:
+                dot = dot.masked_fill(~mask.unsqueeze(-1).bool(), float("-inf"))
+            logits.append(dot)
+        return torch.stack(logits, dim=1)
+
+    def forward(self, query: torch.Tensor, fact: torch.Tensor, mask: torch.Tensor = None, mm_cosine: torch.Tensor =None):
+        raw_relevance = self.raw_relevance_logits(
+            query, fact, mask=mask, mm_cosine=mm_cosine
+        )
+        outs = []
+        for k in range(self.heads):
+            fc_value = self.value_layers[k](fact)
+            fc_value = fc_value * torch.nn.functional.sigmoid(fc_value)
+            alphas = torch.nn.functional.softmax(raw_relevance[:, k], dim=1) + 0.0000001
+            if mask is not None:
+                alphas = alphas.masked_fill(~mask.unsqueeze(-1).bool(), 0)
+            alphas = torch.nan_to_num(alphas)
             out = torch.matmul(fc_value.transpose(-1, -2), alphas)
             outs.append(out)
         return torch.squeeze(torch.concat(outs, dim=1), dim=2)
     
-    def calc_attn_score(self, query: torch.Tensor, fact: torch.Tensor, mask: torch.Tensor = None):
-        alphas_list = []
-        for k in range(self.heads):
-            fc_query = self.query_layers[k](query)
-            fc_query = fc_query * torch.nn.functional.sigmoid(fc_query)
-            fc_fact = self.fact_layers[k](fact)
-            fc_fact = fc_fact * torch.nn.functional.sigmoid(fc_fact)
-            dot = torch.matmul(fc_fact, fc_query.transpose(-1, -2))
-            if mask is not None:
-                dot += - 1e9 * (1-mask.unsqueeze(-1).float())
-            alphas = torch.nn.functional.softmax(dot, dim=1) + 0.0000001
-            alphas_list.append(alphas.squeeze(dim=-1))
-        alpha_avg = torch.stack(alphas_list).sum(dim=0) / self.heads
-        return alpha_avg
+    def calc_attn_score(
+        self,
+        query: torch.Tensor,
+        fact: torch.Tensor,
+        mask: torch.Tensor = None,
+        mm_cosine: torch.Tensor = None,
+    ):
+        raw_relevance = self.raw_relevance_logits(
+            query, fact, mask=mask, mm_cosine=mm_cosine
+        )
+        alphas = torch.nn.functional.softmax(raw_relevance, dim=2)
+        alpha_avg = alphas.squeeze(dim=-1).mean(dim=1)
+        if mask is not None:
+            alpha_avg = alpha_avg.masked_fill(~mask.bool(), 0)
+        return torch.nan_to_num(alpha_avg)
 
 def multi_head_att_v2(
     quer_in_features, fact_in_features, fc_query_shapes, fc_fact_shapes, attn_score_cross=False
