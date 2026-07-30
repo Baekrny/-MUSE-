@@ -60,11 +60,13 @@
 
 ## Execution Checkpoint
 
-Paused at the user's request on 2026-07-30 while the AutoDL instance is in no-GPU mode.
+Resumed and completed on 2026-07-30 after the user enabled the two GPUs.
 
 - Tasks 1-3 are implemented.
 - Targeted tests passed: `7 passed`.
 - Compact core suite passed: `35 passed in 50.50s`.
 - CPU model smoke passed with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`; all three LongerLite variants produced finite forward/backward values and the staged controller transitioned from branch-only to joint mode.
-- GPU DDP smoke and all three 300-step experiments have not started.
-- Chinese execution handoff: `docs/global_token_staged_status_zh.md`.
+- GPU DDP smoke passed and all three 300-step experiments completed.
+- MUSE control GAUC: `0.578522`; GlobalToken joint: `0.578873`; GlobalToken staged: `0.581907`.
+- Staged delta versus control: `+0.003385`, exceeding the `+0.0005` gate; second-seed confirmation is pending.
+- Chinese execution record: `docs/global_token_staged_status_zh.md`.

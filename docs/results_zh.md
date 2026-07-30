@@ -89,6 +89,18 @@ K=100 最快，但 GAUC 损失达到 `0.008971`；K=800 是最接近全候选质
 
 由于架构适配和 ETA operating point 扫描都没有通过晋级门槛，当前实现不建议继续 10% 或全量数据训练。下一轮如果继续追求精度，应先改进候选生成方法，再扩大数据规模。
 
+## GlobalToken 分阶段训练结果
+
+后续实验仍使用同一个 1% 划分和 MUSE warm-up checkpoint，但将匹配预算改为低学习率 300 step。GlobalToken joint 使用 `residual_init=0.05` 并全程联合训练；GlobalToken staged 前 75 step 只训练 `longer_lite`，使用原适配学习率，之后解冻完整模型，剩余 225 step 使用 dense/sparse `5e-5/5e-4` 联合训练。
+
+| 实验 | 训练 step | GAUC | AUC | LogLoss | 相对 MUSE control | 日志 |
+|---|---:|---:|---:|---:|---:|---|
+| MUSE low-LR control | 300 | 0.578522 | 0.602126 | 0.394461 | 0 | `logs/muse_low_lr_300_dev_1pct_20260730_run1.log` |
+| GlobalToken joint | 300 | 0.578873 | 0.602621 | 0.394256 | +0.000351 | `logs/global_token_joint_300_dev_1pct_20260730_run1.log` |
+| GlobalToken staged | 300 | 0.581907 | 0.606298 | 0.391152 | +0.003385 | `logs/global_token_staged_300_dev_1pct_20260730_run1.log` |
+
+staged 相对 control 通过预注册的 `+0.0005` 晋级门槛，并比 joint 高 `+0.003034` GAUC。日志确认第 75 step 完成 branch-only 到 joint 的切换。这是有潜力的单 seed、1% 开发集结果，不是论文级或全量数据结论；下一步仍需第二个 seed 验证。
+
 ## 异常运行说明
 
 - `logs/sim_hard_dev_1pct.log` 暴露了命令行 `use_ddp` 覆盖问题，不计入结果；修复后的 retry 日志有效。
@@ -97,9 +109,9 @@ K=100 最快，但 GAUC 损失达到 `0.008971`；K=800 是最接近全候选质
 
 ## 停止规则与最终选择
 
-预注册规则要求最佳架构相对 MUSE 100-step control 至少提升 `GAUC +0.0005`，才进入第二随机种子和全量数据验证。最佳结果 GlobalToken-LongerLite 的变化为 `-0.000002`，没有达到门槛，因此后续大规模实验被主动跳过。
+预注册规则要求最佳架构相对匹配训练预算的 MUSE control 至少提升 `GAUC +0.0005`，才进入第二随机种子和更大数据验证。GlobalToken staged 的变化为 `+0.003385`，达到门槛；第二 seed 尚未运行，不能直接声明泛化收益。
 
-最终保留 GlobalToken-LongerLite 作为**集成最稳定的 LONGER 风格探索方案**，但不把它描述为精度提升模型；ETA-CP-MUSE 仅作为可量化的检索效率权衡实验。
+最终保留 GlobalToken staged 作为当前最有潜力的 LONGER 风格探索方案；旧的 100-step 变体仍只作为负向消融结果记录。ETA-CP-MUSE 仅作为可量化的检索效率权衡实验。
 
 ## 结果边界
 
@@ -107,4 +119,4 @@ K=100 最快，但 GAUC 损失达到 `0.008971`；K=800 是最接近全候选质
 - 当前序列长度为 1,000，不支持 LONGER 论文中的 100K 级历史。
 - 公开数据路径没有事件时间戳，未验证时间间隔编码或时间阶段划分。
 - TWIN、ETA 和 LONGER 只提供设计思想，本项目不声称完整复现这些系统。
-- 没有任何增强模型在严格匹配的对照上取得正向 GAUC 增益。
+- 旧的 100-step 增强变体未超过对应 control；新的 staged 300-step 结果仍只有单 seed、1% 数据证据。

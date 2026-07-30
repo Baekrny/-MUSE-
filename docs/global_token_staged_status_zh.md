@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目按用户要求暂停。服务器处于无卡开机模式，尚未运行任何新的 GPU 训练或 DDP smoke。代码、配置、单元测试和 CPU smoke 已完成并同步到 `/root/autodl-tmp/ha-muse`。
+本轮 GPU 实验已完成。代码、配置、单元测试、CPU smoke、双卡 staged smoke 和三组正式实验均已完成并同步到 `/root/autodl-tmp/ha-muse`。
 
 开发分支：`codex/global-token-staged`
 
@@ -18,6 +18,18 @@
 - 核心测试结果：`35 passed in 50.50s`。
 - CPU smoke 结果：GroupPool、InnerTrans、GlobalToken 前反向有限值检查通过，stage 1 到 stage 2 转换通过。
 - 无卡服务器必须设置 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`；否则 CPU Transformer smoke 会因线程过度调度超过 5 分钟。固定线程后 smoke 在 40.8 秒内完成。
+- 双卡 staged smoke 通过，日志确认 branch-only 和 joint 两个阶段均执行。
+- 三组正式实验均完成 300 train steps 和 111 eval steps。
+
+## 正式结果
+
+| 实验 | GAUC | AUC | LogLoss | 相对 MUSE control |
+|---|---:|---:|---:|---:|
+| MUSE low-LR control | 0.578522 | 0.602126 | 0.394461 | 0 |
+| GlobalToken joint | 0.578873 | 0.602621 | 0.394256 | +0.000351 |
+| GlobalToken staged | 0.581907 | 0.606298 | 0.391152 | +0.003385 |
+
+GlobalToken staged 比 joint 高 `+0.003034`，并超过预注册 `+0.0005` 晋级门槛。下一步应运行第二 seed；在第二 seed 之前不扩大到 5%、10% 或全量数据。
 
 ## 实验协议
 
@@ -31,7 +43,7 @@
 
 joint 与 staged 使用相同残差初始化，因此两者主要比较 branch-only warm-up 是否缓解新分支适配不足。三组总训练步数一致。
 
-## GPU 启动后的执行顺序
+## GPU 执行记录
 
 先运行两步 DDP smoke，并使用全新日志名：
 
@@ -80,9 +92,8 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py \
 - 未达到 `+0.0005` 时停止扩展，不运行 5%、10% 或全量数据。
 - 在 GPU 结果产生前，README 中只能将该方案描述为“待运行实验”，不能声明精度提升。
 
-## 待完成
+## 后续待完成
 
-1. GPU 启动后运行两步 DDP smoke。
-2. smoke 通过后依次运行 control、joint、staged 三组正式实验。
-3. 汇总 GAUC、AUC、LogLoss、评估吞吐、显存和 staged 转换日志。
-4. 根据预注册规则更新中英文结果文档。
+1. 使用相同 1% 划分运行第二个 seed。
+2. 只有第二 seed 仍达到晋级门槛时，才运行 5% 或 10% 验证。
+3. 更新简历表述，明确这是单 seed 开发集结果，避免过度宣称。

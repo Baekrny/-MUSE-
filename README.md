@@ -55,7 +55,11 @@ ETA-CP-MUSE measured `Recall@200=0.367484`. Its retrieval stage took `2.590 ms` 
 
 An inference-only shortlist sweep on the common warm-up checkpoint confirmed the trade-off: K=100/200/400 achieved `1.91x`/`1.66x`/`1.16x` retrieval-stage speedups, but lost `0.008971`/`0.007665`/`0.005434` GAUC against the K=1000 full-shortlist reference. K=800 reduced the loss to `0.001594` but was already slower than exact CP. No tested point met the `GAUC loss <= 0.0005` operating constraint while accelerating retrieval.
 
-The best architecture delta did not reach the pre-registered `+0.0005` promotion gate. Therefore, the second-seed confirmation and full-data run were intentionally skipped rather than spending compute on an unsupported positive-gain hypothesis. Full metrics, failed-run notes, memory observations, and decision gates are recorded in [docs/results.md](docs/results.md).
+The earlier 100-step architecture delta did not reach the pre-registered `+0.0005` promotion gate. A later staged 300-step follow-up is reported below; it passes the gate on the 1% split, while second-seed confirmation remains pending. Full metrics, failed-run notes, memory observations, and decision gates are recorded in [docs/results.md](docs/results.md).
+
+### Staged GlobalToken Follow-up
+
+A matched 300-step follow-up initialized the residual at `0.05`, trained only the `longer_lite` branch for 75 steps, and then switched to low-rate joint adaptation for 225 steps. MUSE control reached `0.578522` GAUC, GlobalToken joint `0.578873`, and GlobalToken staged `0.581907` (`+0.003385` vs control, `+0.003034` vs joint). The staged run passed the pre-registered promotion gate on the 1% split; second-seed confirmation remains pending.
 
 ## Reproduction
 
@@ -81,7 +85,7 @@ Remove `config/final_smoke.json` from the command to reproduce the registered 10
 - This is a small-scale engineering study on a 1% split and one seed, not a paper-level benchmark or an industrial deployment result.
 - TWIN, ETA, and LONGER contribute design ideas only; this repository does not claim faithful or complete reproduction of any of them.
 - The current data path is limited to 1,000 historical events. It neither supports 100K sequences nor timestamp-aware temporal modeling.
-- No tested extension improved GAUC over the matched control. The ETA path improves measured retrieval-stage latency but loses substantial recall and GAUC.
+- The earlier 100-step extensions did not improve their matched control; the staged 300-step GlobalToken follow-up improved the low-LR control by `+0.003385` on the 1% split and still needs second-seed confirmation.
 - The ETA candidate-size sweep found no operating point that both preserved GAUC within `0.0005` and accelerated exact CP retrieval.
 - Reported latency is retrieval-stage latency on the development setup, not end-to-end serving latency.
 

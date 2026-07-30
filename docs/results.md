@@ -73,4 +73,16 @@ To isolate the approximation trade-off from training, all points below load the 
 
 K=100 is the fastest point, but its GAUC loss is `0.008971`. K=800 is the closest tested approximation to the full-shortlist quality reference, but it still loses `0.001594` GAUC and is slower than exact CP. Therefore, no tested point satisfies the pre-registered `GAUC loss <= 0.0005` constraint while providing a retrieval-stage speedup.
 
-Because neither the architecture adaptations nor the ETA operating-point sweep passed its promotion gate, a 10% or full-data run is not recommended for the current implementation. The next accuracy-oriented iteration should improve candidate generation before increasing the data scale.
+The earlier 100-step architecture adaptations and the ETA operating-point sweep did not pass their respective promotion gates. The staged 300-step GlobalToken follow-up below did pass its gate; second-seed confirmation is now the next accuracy-oriented step before increasing data scale.
+
+## GlobalToken Staged Follow-up
+
+The follow-up uses the same 1% split and warm-up checkpoint, but a matched 300-step low-learning-rate budget. GlobalToken joint starts with `residual_init=0.05` and trains all parameters jointly. GlobalToken staged trains only `longer_lite` for the first 75 steps at the original adaptation rates, then restores the full model and switches to dense/sparse rates `5e-5/5e-4` for the remaining 225 steps.
+
+| Experiment | Train steps | GAUC | AUC | LogLoss | Delta vs MUSE control | Log |
+|---|---:|---:|---:|---:|---:|---|
+| MUSE low-LR control | 300 | 0.578522 | 0.602126 | 0.394461 | 0 | `logs/muse_low_lr_300_dev_1pct_20260730_run1.log` |
+| GlobalToken joint | 300 | 0.578873 | 0.602621 | 0.394256 | +0.000351 | `logs/global_token_joint_300_dev_1pct_20260730_run1.log` |
+| GlobalToken staged | 300 | 0.581907 | 0.606298 | 0.391152 | +0.003385 | `logs/global_token_staged_300_dev_1pct_20260730_run1.log` |
+
+The staged run passed the pre-registered `+0.0005` promotion gate and exceeded joint training by `+0.003034` GAUC. The log confirms the branch-only to joint transition at step 75. This is a promising single-seed 1% development result, not yet a paper-level or full-data claim; second-seed confirmation is the next gated experiment.

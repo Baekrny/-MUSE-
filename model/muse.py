@@ -343,7 +343,7 @@ class MUSE_DIN(torch.nn.Module):
             else:
                 logging.info(
                     "Checkpoint has no longer_lite state; keeping the "
-                    "zero-residual initialization"
+                    "configured longer_lite initialization"
                 )
 
         logging.info(f"[Rank {device_id}] Checkpoint loaded from {ckpt_path}")

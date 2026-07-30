@@ -51,7 +51,7 @@ ETA-CP-MUSE 的 `Recall@200=0.367484`。检索阶段耗时从 exact CP 的 `4.25
 
 基于共同 warm-up checkpoint 的纯推理候选扫描进一步验证了该权衡：K=100/200/400 分别取得 `1.91x`/`1.66x`/`1.16x` 检索阶段加速，但相对 K=1000 全候选参考分别损失 `0.008971`/`0.007665`/`0.005434` GAUC。K=800 将损失缩小到 `0.001594`，但速度已经慢于 exact CP。没有任何测试点同时满足 `GAUC 损失不超过 0.0005` 和检索加速要求。
 
-最佳架构相对 control 的 delta 没有达到预注册的 `+0.0005` 晋级门槛，因此跳过第二个 seed 和完整数据训练。这是基于实验门槛主动停止，而不是缺失结果；项目不提出任何正向 GAUC 增益声明。
+旧的 100-step 架构相对 control 的 delta 没有达到预注册的 `+0.0005` 晋级门槛；后续 staged 300-step 实验已达到该门槛，但第二个 seed 尚未运行，因此暂不扩大到更大数据。
 
 ## 复现
 
@@ -72,9 +72,17 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 
 复现 100-step 正式协议时移除最后的 `config/final_smoke.json`。ETA 实验将中间的变体配置替换为 `config/eta_cp_muse_dev.json`。
 
-### GlobalToken 分阶段适配（待运行）
+### GlobalToken 分阶段适配结果
 
-为检验零初始化残差导致的新分支梯度抑制，项目准备了三组 300-step 等预算实验。MUSE 与 GlobalToken joint 均使用较低学习率；staged 方案将残差初始化为 `0.05`，前 75 step 只训练 `longer_lite`，后 225 step 解冻全部参数并切换到低学习率联合训练。该部分尚未产生 GPU 结果，不能作为精度提升声明。
+为检验零初始化残差导致的新分支梯度抑制，完成了三组 300-step 等预算实验。MUSE 与 GlobalToken joint 均使用较低学习率；staged 方案将残差初始化为 `0.05`，前 75 step 只训练 `longer_lite`，后 225 step 解冻全部参数并切换到低学习率联合训练。
+
+| 实验 | GAUC | 相对 MUSE control |
+|---|---:|---:|
+| MUSE low-LR control | 0.578522 | 0 |
+| GlobalToken joint | 0.578873 | +0.000351 |
+| GlobalToken staged | 0.581907 | +0.003385 |
+
+staged 比 joint 高 `+0.003034` GAUC，达到预注册的 `+0.0005` 晋级门槛。该结果仍来自 1% 数据、单 seed，第二 seed 尚未运行，不能直接表述为稳定泛化收益。
 
 ```bash
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/muse_low_lr_300_dev.json
@@ -87,7 +95,7 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 - 仅完成 1% 数据、单 seed 的开发实验，不等同于论文级复现或线上结论。
 - 没有完整实现 TWIN、ETA、LONGER，也没有复刻其工业特征、训练规模和服务系统。
 - 当前数据链路只支持 1K 历史，不支持 100K；数据没有时间戳，无法验证时间间隔建模。
-- 所有增强模型的 GAUC 都没有超过严格匹配的 100-step control。
+- 旧的 100-step 增强变体没有超过对应 control；新的 staged 300-step 结果相对低学习率 control 提升 `+0.003385`，但仍只有单 seed、1% 数据证据。
 - ETA 的加速只覆盖检索阶段，不是端到端推理延迟；低 Recall 带来了明显 GAUC 损失。
 - ETA 候选规模扫描没有找到同时满足 `GAUC 损失不超过 0.0005` 和 exact CP 加速的 operating point。
 - 显存峰值来自 `nvidia-smi` 采样，不是 profiler 的精确峰值。
