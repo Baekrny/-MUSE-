@@ -1,0 +1,11 @@
+# Local datasets and generated experiment artifacts
+taobao-mm/
+taobao-mm-*/
+logs/
+ckpt/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/

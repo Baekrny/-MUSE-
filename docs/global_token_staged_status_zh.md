@@ -1,10 +1,10 @@
 # GlobalToken 分阶段训练执行状态
 
-更新时间：2026-07-30
+更新时间：2026-07-31
 
 ## 当前状态
 
-本轮 GPU 实验已完成。代码、配置、单元测试、CPU smoke、双卡 staged smoke 和三组正式实验均已完成并同步到 `/root/autodl-tmp/ha-muse`。
+本轮 GPU 实验已完成。代码、配置、单元测试、CPU smoke、双卡 staged smoke、1% 两 seed、10% 和全量正式实验均已完成并同步到 `/root/autodl-tmp/ha-muse`。
 
 开发分支：`codex/global-token-staged`
 
@@ -22,6 +22,18 @@
 - 三组正式实验均完成 300 train steps 和 111 eval steps。
 
 ## 正式结果
+
+### 全量主结果
+
+| 实验 | GAUC | AUC | LogLoss | 相对 MUSE control |
+|---|---:|---:|---:|---:|
+| MUSE warm-up | 0.614801 | 0.645007 | 0.383749 | 不适用 |
+| MUSE low-LR control | 0.593760 | 0.625307 | 0.411067 | 0 |
+| GlobalToken staged | 0.597236 | 0.629558 | 0.403234 | +0.003476 |
+
+全量 staged 相对 matched control 提升 AUC `+0.004251`、降低 LogLoss `0.007833`，但仍低于续训前的 warm-up，不能表述为超过原始 MUSE。
+
+### 1% 机制实验
 
 | 实验 | GAUC | AUC | LogLoss | 相对 MUSE control |
 |---|---:|---:|---:|---:|
@@ -92,8 +104,9 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py \
 - 未达到 `+0.0005` 时停止扩展，不运行 5%、10% 或全量数据。
 - 在 GPU 结果产生前，README 中只能将该方案描述为“待运行实验”，不能声明精度提升。
 
-## 后续待完成
+## 收口状态
 
 1. 10% 匹配验证已完成，staged 相对 control 提升 `GAUC +0.005136`。
 2. 全量匹配验证已完成，staged 相对 control 提升 `GAUC +0.003476`。
-3. 更新简历表述，明确当前证据为 1% 两个 seed、10% 单 seed 和全量单 seed，避免将离线结果表述为线上收益。
+3. README 和结果文档以全量实验为主结果，1% 与 10% 作为跨 seed、跨规模一致性证据。
+4. 简历表述必须明确对照为 matched continuation control，避免写成线上收益或超过原始 MUSE。

@@ -2,7 +2,15 @@
 
 ## 结论先行
 
-当前结果来自 TAOBAO-MM 的 user-consistent 1% 开发集，而不是 139 GB 全量数据。每个 seed 都使用各自重新训练的 MUSE warm-up checkpoint，并保持模型间训练预算一致。GlobalToken staged 在 seed 42 和 seed 2026 上均达到预注册的 `GAUC +0.0005` 晋级门槛，因此可以进入更大数据验证。
+当前已完成 TAOBAO-MM 1% 两个 seed、10% 单 seed和全量单 seed 验证。最终全量实验覆盖 76,015,123 行训练数据和 22,979,465 行测试数据；GlobalToken staged 相对同 checkpoint、同 300-step 预算的 MUSE low-LR control 提升 GAUC `+0.003476`、AUC `+0.004251`，LogLoss 降低 `0.007833`。
+
+| 全量实验 | GAUC | AUC | LogLoss | 相对 matched control |
+|---|---:|---:|---:|---:|
+| MUSE warm-up | **0.614801** | **0.645007** | **0.383749** | 不适用 |
+| MUSE low-LR control | 0.593760 | 0.625307 | 0.411067 | 0 |
+| GlobalToken staged | 0.597236 | 0.629558 | 0.403234 | **+0.003476** |
+
+Staged 仍低于续训前的 MUSE warm-up。现有证据支持“分阶段适配比直接低学习率续训更稳”，不支持“GlobalToken 超过原始 MUSE”；结果也不代表线上 A/B 收益。
 
 ## 实验协议
 
@@ -87,7 +95,7 @@ ETA-CP-MUSE 使用固定的 32-bit 随机投影哈希，从 1,000 条历史中�
 
 K=100 最快，但 GAUC 损失达到 `0.008971`；K=800 是最接近全候选质量参考的近似点，但仍损失 `0.001594` GAUC，且速度已经慢于 exact CP。因此，当前扫描中没有候选点能同时满足预注册的 `GAUC 损失不超过 0.0005` 和检索阶段加速要求。
 
-由于旧架构适配和 ETA operating point 扫描没有通过晋级门槛，之前没有扩大数据规模；staged 300-step GlobalToken 已在两个 seed 上通过门槛，下一步进入更大数据验证。
+旧架构适配和 ETA operating point 扫描没有通过晋级门槛，因此没有扩大数据规模；staged 300-step GlobalToken 先在两个 seed 上通过门槛，随后完成 10% 与全量验证。
 
 ## GlobalToken 分阶段训练结果
 
@@ -110,18 +118,18 @@ staged 相对 control 通过预注册的 `+0.0005` 晋级门槛，并比 joint �
 | MUSE low-LR control | 0.581115 | 0.603586 | 0.394767 | 0 | `logs/muse_low_lr_300_dev_1pct_seed2026_20260730_run2.log` |
 | GlobalToken staged | 0.584669 | 0.608174 | 0.390996 | +0.003554 | `logs/global_token_staged_300_dev_1pct_seed2026_20260730_run2.log` |
 
-staged 在两个 seed 上均取得正向 GAUC delta：seed 42 为 `+0.003385`，seed 2026 为 `+0.003554`。这支持进入更大数据验证，但仍不能表述为全量数据或线上收益。
+staged 在两个 seed 上均取得正向 GAUC delta：seed 42 为 `+0.003385`，seed 2026 为 `+0.003554`。这构成进入 10% 与全量验证的开发阶段依据，但单独看该小规模实验仍不能表述为全量或线上收益。
 
 ## 10% 数据验证
 
-使用 `user_id % 10 == 0` 构造确定性的用户一致 10% 切分，训练集 7,592,889 行，测试集 2,297,865 行。seed 2026 的 MUSE warm-up 使用 3,600 train step 和 1,100 eval step；随后 control 与 staged 从同一个 checkpoint 出发，均训练 300 step 并评估 1,100 step。
+使用 `(user_id & 0x7FFFFFFFFFFFFFFF) % 10 == 0` 构造确定性的用户一致 10% 切分，训练集 7,592,889 行，测试集 2,297,865 行。seed 2026 的 MUSE warm-up 使用 3,600 train step 和 1,100 eval step；随后 control 与 staged 从同一个 checkpoint 出发，均训练 300 step 并评估 1,100 step。
 
 | 实验 | GAUC | AUC | LogLoss | 相对 control | 日志 |
 |---|---:|---:|---:|---:|---|
 | MUSE low-LR control | 0.568999 | 0.595938 | 0.454544 | 0 | `logs/muse_low_lr_300_10pct_seed2026_20260730_run1.log` |
 | GlobalToken staged | 0.574135 | 0.602547 | 0.433728 | +0.005136 | `logs/global_token_staged_300_10pct_seed2026_20260730_run1.log` |
 
-staged 同时将 AUC 提升 `+0.006609`，LogLoss 降低 `0.020816`。10% 结果通过非负晋级门槛，支持考虑全量训练；但它仍是 10% 数据上的单 seed 结果，不代表线上收益。
+staged 同时将 AUC 提升 `+0.006609`，LogLoss 降低 `0.020816`。该结果通过非负晋级门槛，随后按计划完成全量训练；10% 单 seed 本身不代表线上收益。
 
 第一次 10% 启动因相对数据路径缺失而没有训练。后续两次 warm-up 使用接近数据尾部的 DDP step 上限，因两个 rank 的 IterableDataset 实际批次数不同而在尾部等待，均不计入结果。有效协议将训练/评估限制为 3,600/1,100 step，低于两个 rank 的可用批次数；control 与 staged 使用完全相同的限制。
 
@@ -145,7 +153,7 @@ staged 同时将 AUC 提升 `+0.006609`，LogLoss 降低 `0.020816`。10% 结果
 
 ## 停止规则与最终选择
 
-预注册规则要求最佳架构相对匹配训练预算的 MUSE control 至少提升 `GAUC +0.0005`，才进入第二随机种子和更大数据验证。GlobalToken staged 在 seed 42 和 seed 2026 上分别提升 `+0.003385` 和 `+0.003554`，均达到门槛；下一步可以进行更大数据验证。
+预注册规则要求最佳架构相对匹配训练预算的 MUSE control 至少提升 `GAUC +0.0005`，才进入第二随机种子和更大数据验证。GlobalToken staged 在 seed 42 和 seed 2026 上分别提升 `+0.003385` 和 `+0.003554`，均达到门槛；10% 和全量验证随后均已完成，GAUC delta 分别为 `+0.005136` 和 `+0.003476`。
 
 最终保留 GlobalToken staged 作为当前最有潜力的 LONGER 风格探索方案；旧的 100-step 变体仍只作为负向消融结果记录。ETA-CP-MUSE 仅作为可量化的检索效率权衡实验。
 

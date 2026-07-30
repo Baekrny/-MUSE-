@@ -9,7 +9,7 @@
 <p align="center">
     <a href="#overview">Overview</a> |
     <a href="#project-contributions">Project Contributions</a> |
-    <a href="#measured-results">Measured Results</a> |
+    <a href="#full-data-result">Full-Data Result</a> |
     <a href="#reproduction">Reproduction</a> |
     <a href="#set-up-environment">Set Up Environment</a> |
     <a href="#prepare-dataset">Prepare Dataset</a> |
@@ -32,13 +32,48 @@ This is the official pytorch implementation of paper "MUSE: A Simple Yet Effecti
 ## Project Contributions
 
 - **Consistent-relevance CP-MUSE:** reuses the trainable SA-TA raw relevance score in both full-history Top-50 retrieval and downstream target attention. This follows TWIN's broad principle that retrieval and ranking should reduce semantic inconsistency, without reproducing TWIN's production architecture.
-- **LONGER-inspired full-history branches:** GroupPool-TA compresses 1,000 events into 250 target-aware group tokens; InnerTrans-TA adds independent four-event local Transformer encoding; GlobalToken-LongerLite lets target, user, CLS, and recent queries read the compressed history. All branches enter through a zero-initialized residual before the horizon gate.
+- **LONGER-inspired full-history branches:** GroupPool-TA compresses 1,000 events into 250 target-aware group tokens; InnerTrans-TA adds independent four-event local Transformer encoding; GlobalToken-LongerLite lets target, user, CLS, and recent queries read the compressed history. Development branches use a zero-initialized residual; the selected staged follow-up uses `residual_init=0.05` before the horizon gate.
 - **ETA-style efficiency ablation:** a deterministic 32-bit random-projection hash shortlists 200 events before the shared CP-MUSE scorer reranks to 50. Exact retrieval is retained as an evaluation-only reference for Recall@200 and comparable retrieval-stage latency.
-- **Fair continuation protocol:** every architecture adaptation starts from the same MUSE warm-up checkpoint and uses the same data order, optimizer rates, 100 adaptation steps, and 111 evaluation steps.
+- **Fair continuation protocol:** development ablations share one MUSE warm-up checkpoint and a matched 100-step budget. The selected staged follow-up and its control share a separate matched 300-step budget, data order, and evaluation coverage.
 
 These changes target the public 1,000-event TAOBAO-MM setting. They do not implement 100K-length modeling, and the public samples provide no event timestamps, so temporal-gap modeling is outside this project.
 
-## Measured Results
+### Selected Architecture
+
+```mermaid
+flowchart LR
+    H["1,000-event history"] --> G["GroupPool<br/>4 events per token"]
+    G --> K["250 history Keys / Values"]
+    Q["target + user + CLS<br/>+ 100 recent merged tokens"] --> A["GlobalToken Cross-Attention"]
+    K --> A
+    A --> R["Learnable residual scale"]
+    R --> M["MUSE horizon gate and CTR head"]
+```
+
+History tokens never read target or user features; only the query side reads the compressed full history.
+
+## Full-Data Result
+
+The final validation uses all 76,015,123 training rows and 22,979,465 test rows with seed 2026 on 2 x RTX 4090 24 GB. Both continuations start from the same full-data MUSE warm-up checkpoint, train for 300 matched steps, and evaluate on the complete test set.
+
+| Full-data experiment | GAUC | AUC | LogLoss | Delta vs matched control |
+|---|---:|---:|---:|---:|
+| MUSE warm-up | **0.614801** | **0.645007** | **0.383749** | n/a |
+| MUSE low-LR control | 0.593760 | 0.625307 | 0.411067 | 0 |
+| GlobalToken staged | 0.597236 | 0.629558 | 0.403234 | **+0.003476** |
+
+Against the matched continuation control, staged GlobalToken improves AUC by `+0.004251` and lowers LogLoss by `0.007833`. It remains below the pre-continuation MUSE warm-up, so the supported claim is that staged adaptation is more stable than direct low-rate continuation, not that GlobalToken outperforms the original MUSE checkpoint. All measurements are offline public-dataset results.
+
+### Consistency Across Seeds and Scales
+
+| Data scale | Seed | Control GAUC | Staged GAUC | Delta |
+|---|---:|---:|---:|---:|
+| 1% | 42 | 0.578522 | 0.581907 | +0.003385 |
+| 1% | 2026 | 0.581115 | 0.584669 | +0.003554 |
+| 10% | 2026 | 0.568999 | 0.574135 | +0.005136 |
+| Full | 2026 | 0.593760 | 0.597236 | +0.003476 |
+
+### Development Ablations
 
 All development measurements use seed 42, a user-consistent 1% TAOBAO-MM split, 2 x RTX 4090 24 GB, 100 adaptation steps, and 111 evaluation steps. The common 100-step MUSE continuation is the architecture control.
 
@@ -55,21 +90,55 @@ ETA-CP-MUSE measured `Recall@200=0.367484`. Its retrieval stage took `2.590 ms` 
 
 An inference-only shortlist sweep on the common warm-up checkpoint confirmed the trade-off: K=100/200/400 achieved `1.91x`/`1.66x`/`1.16x` retrieval-stage speedups, but lost `0.008971`/`0.007665`/`0.005434` GAUC against the K=1000 full-shortlist reference. K=800 reduced the loss to `0.001594` but was already slower than exact CP. No tested point met the `GAUC loss <= 0.0005` operating constraint while accelerating retrieval.
 
-The earlier 100-step architecture delta did not reach the pre-registered `+0.0005` promotion gate. A later staged 300-step follow-up passed the gate on both tested seeds; a larger-data validation is the next step. Full metrics, failed-run notes, memory observations, and decision gates are recorded in [docs/results.md](docs/results.md).
+The earlier 100-step architecture deltas did not reach the pre-registered `+0.0005` promotion gate. The later staged 300-step follow-up passed on two seeds before advancing to the completed 10% and full-data validations. This ordered promotion protocol avoids spending the full-data budget on every candidate. Full metrics, failed-run notes, memory observations, and decision gates are recorded in [docs/results.md](docs/results.md).
 
 ### Staged GlobalToken Follow-up
 
 A matched 300-step follow-up initialized the residual at `0.05`, trained only the `longer_lite` branch for 75 steps, and then switched to low-rate joint adaptation for 225 steps. On the 1% split, staged improved GAUC by `+0.003385` on seed 42 and `+0.003554` on seed 2026. The gain was `+0.005136` on the user-consistent 10% split and `+0.003476` on all 76,015,123 training rows; the full-data run also improved AUC by `+0.004251` and reduced LogLoss by `0.007833`.
 
-## Reproduction
-
-After preparing the 1% user-consistent split and the common warm-up checkpoints referenced by `config/muse_continue_short_dev.json`, run the lightweight CPU model smoke:
-
-```bash
-PYTHONPATH=. python scripts/model_smoke.py
+```mermaid
+flowchart LR
+    C["MUSE warm-up checkpoint"] --> S1["Steps 1-75<br/>longer_lite only<br/>residual init = 0.05"]
+    S1 --> S2["Steps 76-300<br/>unfreeze backbone<br/>low-rate joint training"]
+    S2 --> E["Full-test evaluation"]
 ```
 
-Run two-step, two-GPU integration smokes by layering the shared continuation config, one variant config, and the final override:
+## Reproduction
+
+Install PyTorch and the project dependencies, then download and validate TAOBAO-MM. The complete dataset occupies approximately 139 GB; set `HF_ENDPOINT` or `HF_TOKEN` separately when required by the local network environment.
+
+```bash
+pip install -r requirements.txt
+pip install huggingface_hub
+python scripts/download_taobao_mm.py --output-dir taobao-mm
+python scripts/validate_dataset.py --root taobao-mm
+```
+
+Check two-GPU NCCL communication and run the lightweight CPU model smoke:
+
+```bash
+torchrun --standalone --nproc_per_node=2 scripts/ddp_smoke.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONPATH=. python scripts/model_smoke.py
+```
+
+Run full-data warm-up, the matched control, and staged GlobalToken through one safe entry point:
+
+```bash
+NPROC_PER_NODE=2 bash scripts/run_full_pipeline.sh all
+```
+
+The pipeline validates the dataset first and writes a new timestamped log for every run. It stops on a partial warm-up checkpoint pair and reuses a complete pair instead of overwriting it. The `validate`, `warmup`, `control`, and `staged` modes can also be run separately.
+
+The official test metadata may store `num_shards=48` as the last shard index while files are numbered 0 through 48. The validator accepts this one-count difference only when the exact Parquet row total matches the metadata and emits a warning; row mismatches or larger shard-count differences still stop the run.
+
+To reproduce the secondary 10% consistency check, create deterministic user buckets for train and test. Use empty output directories or directories produced completely by the same command:
+
+```bash
+python tools/create_user_subset.py --input-dir taobao-mm/train --output-dir taobao-mm-10pct/train --mode train --modulus 10 --keep-buckets 1
+python tools/create_user_subset.py --input-dir taobao-mm/test --output-dir taobao-mm-10pct/test --mode test --modulus 10 --keep-buckets 1
+```
+
+For the 1% development ablations, prepare the common checkpoint referenced by `config/muse_continue_short_dev.json`, then run two-step, two-GPU integration smokes by layering the shared continuation config, one variant config, and the final override:
 
 ```bash
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/cp_muse_dev.json config/final_smoke.json
@@ -91,7 +160,11 @@ Remove `config/final_smoke.json` from the command to reproduce the registered 10
 
 ## Resume Bullet
 
-> Extended Alibaba MUSE for 1,000-event multimodal recommendation with a shared retrieval/attention scorer, local-to-global full-history encoders, and a hash shortlist; built a controlled 2 x RTX 4090 DDP evaluation protocol and measured a 1.64x retrieval-stage speedup while documenting the associated Recall@200 and GAUC trade-off.
+> Extended Alibaba MUSE for 1,000-event multimodal recommendation with consistent retrieval/attention scoring and grouped GlobalToken full-history encoding; completed 2 x RTX 4090 DDP validation on 76.0M training rows.
+
+> Designed a 75-step branch warm-up plus 225-step low-rate joint adaptation schedule; against the same-checkpoint, same-budget continuation control, improved full-data GAUC/AUC by `0.003476/0.004251` and reduced LogLoss by `0.007833`, while explicitly retaining the stronger pre-continuation warm-up result as a limitation.
+
+> Implemented an ETA-style 32-bit hash shortlist and measured a 1.64x retrieval-stage speedup together with its Recall@200 and GAUC loss, using a pre-registered gate to stop unpromising expansion.
 
 ## Set Up Environment
 

@@ -1,5 +1,17 @@
 # Experiment Results
 
+## Conclusion First
+
+Validation now covers two seeds on the 1% split, one seed on the 10% split, and one full-data seed. The final run uses all 76,015,123 training rows and 22,979,465 test rows. Against the same-checkpoint, same-budget 300-step MUSE low-LR control, staged GlobalToken improves GAUC by `+0.003476`, AUC by `+0.004251`, and lowers LogLoss by `0.007833`.
+
+| Full-data experiment | GAUC | AUC | LogLoss | Delta vs matched control |
+|---|---:|---:|---:|---:|
+| MUSE warm-up | **0.614801** | **0.645007** | **0.383749** | n/a |
+| MUSE low-LR control | 0.593760 | 0.625307 | 0.411067 | 0 |
+| GlobalToken staged | 0.597236 | 0.629558 | 0.403234 | **+0.003476** |
+
+Staged remains below the pre-continuation MUSE warm-up. The supported conclusion is that staged adaptation is more stable than direct low-rate continuation, not that GlobalToken outperforms the original MUSE checkpoint. These are offline public-dataset measurements, not online A/B results.
+
 ## Protocol
 
 - Data: TAOBAO-MM user-consistent 1% split, 755,196 train rows and 227,689 test rows
@@ -73,7 +85,7 @@ To isolate the approximation trade-off from training, all points below load the 
 
 K=100 is the fastest point, but its GAUC loss is `0.008971`. K=800 is the closest tested approximation to the full-shortlist quality reference, but it still loses `0.001594` GAUC and is slower than exact CP. Therefore, no tested point satisfies the pre-registered `GAUC loss <= 0.0005` constraint while providing a retrieval-stage speedup.
 
-The earlier 100-step architecture adaptations and the ETA operating-point sweep did not pass their respective promotion gates. The staged 300-step GlobalToken follow-up passed its gate on both tested seeds; the next accuracy-oriented step is a larger-data validation.
+The earlier 100-step architecture adaptations and the ETA operating-point sweep did not pass their respective promotion gates, so they were not scaled up. The staged 300-step GlobalToken follow-up passed on two seeds and subsequently completed both 10% and full-data validation.
 
 ## GlobalToken Staged Follow-up
 
@@ -96,18 +108,18 @@ The second seed re-created the MUSE warm-up checkpoint with `seed=2026`, then ra
 | MUSE low-LR control | 2026 | 0.581115 | 0.603586 | 0.394767 | 0 | `logs/muse_low_lr_300_dev_1pct_seed2026_20260730_run2.log` |
 | GlobalToken staged | 2026 | 0.584669 | 0.608174 | 0.390996 | +0.003554 | `logs/global_token_staged_300_dev_1pct_seed2026_20260730_run2.log` |
 
-The staged delta is positive on both seeds: `+0.003385` for seed 42 and `+0.003554` for seed 2026. This supports advancing to a larger-data check, but it is still not a full-data or production claim.
+The staged delta is positive on both seeds: `+0.003385` for seed 42 and `+0.003554` for seed 2026. These development results justified the later 10% and full-data checks, but are not full-data or production claims by themselves.
 
 ## 10% Data Validation
 
-A deterministic user-consistent 10% subset was created with `user_id % 10 == 0`: 7,592,889 training rows and 2,297,865 test rows. The seed-2026 MUSE warm-up used 3,600 train steps and 1,100 evaluation steps. Both continuations then used the same warm-up checkpoint, 300 train steps, and 1,100 evaluation steps.
+A deterministic user-consistent 10% subset was created with `(user_id & 0x7FFFFFFFFFFFFFFF) % 10 == 0`: 7,592,889 training rows and 2,297,865 test rows. The seed-2026 MUSE warm-up used 3,600 train steps and 1,100 evaluation steps. Both continuations then used the same warm-up checkpoint, 300 train steps, and 1,100 evaluation steps.
 
 | Experiment | GAUC | AUC | LogLoss | Delta vs control | Log |
 |---|---:|---:|---:|---:|---|
 | MUSE low-LR control | 0.568999 | 0.595938 | 0.454544 | 0 | `logs/muse_low_lr_300_10pct_seed2026_20260730_run1.log` |
 | GlobalToken staged | 0.574135 | 0.602547 | 0.433728 | +0.005136 | `logs/global_token_staged_300_10pct_seed2026_20260730_run1.log` |
 
-The staged model also improves AUC by `+0.006609` and lowers LogLoss by `0.020816`. This larger-data result passes the non-negative promotion gate and supports considering a full-data run. It remains one seed on a 10% subset, not an online or production result.
+The staged model also improves AUC by `+0.006609` and lowers LogLoss by `0.020816`. This result passed the non-negative promotion gate and was followed by the completed full-data run. The 10% single-seed result is not an online or production claim.
 
 The first 10% launch used a missing relative data path and did not train. Two later warm-up attempts used near-exhaustive DDP step caps and stalled when rank-local iterable lengths diverged at the shard tail. They are excluded. The valid protocol caps training/evaluation at 3,600/1,100 steps, safely below both ranks' available batches; the matched control and staged runs use the same cap.
 
