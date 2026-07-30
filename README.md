@@ -59,7 +59,7 @@ The earlier 100-step architecture delta did not reach the pre-registered `+0.000
 
 ### Staged GlobalToken Follow-up
 
-A matched 300-step follow-up initialized the residual at `0.05`, trained only the `longer_lite` branch for 75 steps, and then switched to low-rate joint adaptation for 225 steps. On the 1% split, staged improved GAUC by `+0.003385` on seed 42 and `+0.003554` on seed 2026. On a user-consistent 10% split, seed-2026 control reached `0.568999` and staged reached `0.574135` (`+0.005136`), with AUC improving by `+0.006609` and LogLoss decreasing by `0.020816`.
+A matched 300-step follow-up initialized the residual at `0.05`, trained only the `longer_lite` branch for 75 steps, and then switched to low-rate joint adaptation for 225 steps. On the 1% split, staged improved GAUC by `+0.003385` on seed 42 and `+0.003554` on seed 2026. The gain was `+0.005136` on the user-consistent 10% split and `+0.003476` on all 76,015,123 training rows; the full-data run also improved AUC by `+0.004251` and reduced LogLoss by `0.007833`.
 
 ## Reproduction
 
@@ -82,10 +82,10 @@ Remove `config/final_smoke.json` from the command to reproduce the registered 10
 
 ## Limitations
 
-- This is a small-scale engineering study on a 1% split and one seed, not a paper-level benchmark or an industrial deployment result.
+- Evidence includes two seeds on the 1% split plus one seed on the 10% split and full dataset; these remain offline public-dataset results, not an industrial deployment or online A/B test.
 - TWIN, ETA, and LONGER contribute design ideas only; this repository does not claim faithful or complete reproduction of any of them.
 - The current data path is limited to 1,000 historical events. It neither supports 100K sequences nor timestamp-aware temporal modeling.
-- The earlier 100-step extensions did not improve their matched control; staged GlobalToken improved GAUC on both 1% seeds and by `+0.005136` on the 10% seed-2026 validation.
+- The earlier 100-step extensions did not improve their matched control; staged GlobalToken improved GAUC on both 1% seeds, the 10% validation, and the full-data validation.
 - The ETA candidate-size sweep found no operating point that both preserved GAUC within `0.0005` and accelerated exact CP retrieval.
 - Reported latency is retrieval-stage latency on the development setup, not end-to-end serving latency.
 

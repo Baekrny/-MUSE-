@@ -95,5 +95,5 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py \
 ## 后续待完成
 
 1. 10% 匹配验证已完成，staged 相对 control 提升 `GAUC +0.005136`。
-2. 10% 结果为正，可以考虑全量训练，但需先确认训练时长和磁盘预算。
-3. 更新简历表述，明确当前证据为 1% 两个 seed 加 10% 单 seed，避免过度宣称。
+2. 全量匹配验证已完成，staged 相对 control 提升 `GAUC +0.003476`。
+3. 更新简历表述，明确当前证据为 1% 两个 seed、10% 单 seed 和全量单 seed，避免将离线结果表述为线上收益。

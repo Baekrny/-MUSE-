@@ -110,3 +110,15 @@ A deterministic user-consistent 10% subset was created with `user_id % 10 == 0`:
 The staged model also improves AUC by `+0.006609` and lowers LogLoss by `0.020816`. This larger-data result passes the non-negative promotion gate and supports considering a full-data run. It remains one seed on a 10% subset, not an online or production result.
 
 The first 10% launch used a missing relative data path and did not train. Two later warm-up attempts used near-exhaustive DDP step caps and stalled when rank-local iterable lengths diverged at the shard tail. They are excluded. The valid protocol caps training/evaluation at 3,600/1,100 steps, safely below both ranks' available batches; the matched control and staged runs use the same cap.
+
+## Full-Data Validation
+
+The final validation uses all 76,015,123 training rows and 22,979,465 test rows with seed 2026. Reconstructed shards give both DDP ranks exactly 38,007 training batches and 11,489 evaluation batches. MUSE warm-up trained for one full epoch, then the matched control and staged model each continued for 300 steps and were evaluated on the full test set.
+
+| Experiment | GAUC | AUC | LogLoss | Delta vs control | Log |
+|---|---:|---:|---:|---:|---|
+| MUSE full-data warm-up | 0.614801 | 0.645007 | 0.383749 | n/a | `logs/muse_warmup_full_seed2026_20260731_run1.log` |
+| MUSE low-LR control | 0.593760 | 0.625307 | 0.411067 | 0 | `logs/muse_low_lr_300_full_seed2026_20260731_run1.log` |
+| GlobalToken staged | 0.597236 | 0.629558 | 0.403234 | +0.003476 | `logs/global_token_staged_300_full_seed2026_20260731_run1.log` |
+
+On the full dataset, staged GlobalToken improves AUC by `+0.004251` and lowers LogLoss by `0.007833` against the matched continuation control. The positive GAUC delta is consistent with the two 1% seeds and the 10% validation. This is an offline public-dataset result, not an online A/B test or production claim.
