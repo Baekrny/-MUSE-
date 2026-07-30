@@ -112,6 +112,19 @@ staged 相对 control 通过预注册的 `+0.0005` 晋级门槛，并比 joint �
 
 staged 在两个 seed 上均取得正向 GAUC delta：seed 42 为 `+0.003385`，seed 2026 为 `+0.003554`。这支持进入更大数据验证，但仍不能表述为全量数据或线上收益。
 
+## 10% 数据验证
+
+使用 `user_id % 10 == 0` 构造确定性的用户一致 10% 切分，训练集 7,592,889 行，测试集 2,297,865 行。seed 2026 的 MUSE warm-up 使用 3,600 train step 和 1,100 eval step；随后 control 与 staged 从同一个 checkpoint 出发，均训练 300 step 并评估 1,100 step。
+
+| 实验 | GAUC | AUC | LogLoss | 相对 control | 日志 |
+|---|---:|---:|---:|---:|---|
+| MUSE low-LR control | 0.568999 | 0.595938 | 0.454544 | 0 | `logs/muse_low_lr_300_10pct_seed2026_20260730_run1.log` |
+| GlobalToken staged | 0.574135 | 0.602547 | 0.433728 | +0.005136 | `logs/global_token_staged_300_10pct_seed2026_20260730_run1.log` |
+
+staged 同时将 AUC 提升 `+0.006609`，LogLoss 降低 `0.020816`。10% 结果通过非负晋级门槛，支持考虑全量训练；但它仍是 10% 数据上的单 seed 结果，不代表线上收益。
+
+第一次 10% 启动因相对数据路径缺失而没有训练。后续两次 warm-up 使用接近数据尾部的 DDP step 上限，因两个 rank 的 IterableDataset 实际批次数不同而在尾部等待，均不计入结果。有效协议将训练/评估限制为 3,600/1,100 step，低于两个 rank 的可用批次数；control 与 staged 使用完全相同的限制。
+
 ## 异常运行说明
 
 - `logs/sim_hard_dev_1pct.log` 暴露了命令行 `use_ddp` 覆盖问题，不计入结果；修复后的 retry 日志有效。
@@ -126,8 +139,8 @@ staged 在两个 seed 上均取得正向 GAUC delta：seed 42 为 `+0.003385`，
 
 ## 结果边界
 
-- 当前完成的是 1% 数据、两个随机种子的开发实验，不是全量 TAOBAO-MM 训练。
+- 当前完成了 1% 数据的两个 seed，以及 10% 数据的单 seed 验证，不是全量 TAOBAO-MM 训练。
 - 当前序列长度为 1,000，不支持 LONGER 论文中的 100K 级历史。
 - 公开数据路径没有事件时间戳，未验证时间间隔编码或时间阶段划分。
 - TWIN、ETA 和 LONGER 只提供设计思想，本项目不声称完整复现这些系统。
-- 旧的 100-step 增强变体未超过对应 control；新的 staged 300-step 结果在两个 seed、1% 数据上均超过对应 control。
+- 旧的 100-step 增强变体未超过对应 control；新的 staged 300-step 结果在 1% 的两个 seed 和 10% 的单 seed 上均超过对应 control。

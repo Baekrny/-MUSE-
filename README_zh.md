@@ -82,7 +82,7 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 | GlobalToken joint | 0.578873 | +0.000351 |
 | GlobalToken staged | 0.581907 | +0.003385 |
 
-staged 比 joint 高 `+0.003034` GAUC，达到预注册的 `+0.0005` 晋级门槛。seed 2026 上 staged 相对 control 进一步提升 `+0.003554`。两个结果都来自 1% 数据，下一步需要更大数据验证，不能直接表述为线上收益。
+staged 比 joint 高 `+0.003034` GAUC，达到预注册的 `+0.0005` 晋级门槛。在 1% 数据的 seed 2026 上，staged 相对 control 提升 `+0.003554`；在用户一致 10% 数据上进一步提升 `+0.005136`，同时 AUC 提升 `+0.006609`、LogLoss 降低 `0.020816`。结果仍不能直接表述为线上收益。
 
 ```bash
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/muse_low_lr_300_dev.json
@@ -92,10 +92,10 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 
 ## 局限与负向结果
 
-- 当前完成 1% 数据、两个 seed 的开发实验，不等同于论文级复现或线上结论。
+- 当前完成 1% 数据的两个 seed 和 10% 数据的单 seed 验证，不等同于论文级复现或线上结论。
 - 没有完整实现 TWIN、ETA、LONGER，也没有复刻其工业特征、训练规模和服务系统。
 - 当前数据链路只支持 1K 历史，不支持 100K；数据没有时间戳，无法验证时间间隔建模。
-- 旧的 100-step 增强变体没有超过对应 control；新的 staged 300-step 结果在 seed 42 和 seed 2026 上分别提升 `+0.003385` 和 `+0.003554`。
+- 旧的 100-step 增强变体没有超过对应 control；新的 staged 300-step 结果在 1% 两个 seed 和 10% 单 seed 上均超过对应 control。
 - ETA 的加速只覆盖检索阶段，不是端到端推理延迟；低 Recall 带来了明显 GAUC 损失。
 - ETA 候选规模扫描没有找到同时满足 `GAUC 损失不超过 0.0005` 和 exact CP 加速的 operating point。
 - 显存峰值来自 `nvidia-smi` 采样，不是 profiler 的精确峰值。

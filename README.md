@@ -59,7 +59,7 @@ The earlier 100-step architecture delta did not reach the pre-registered `+0.000
 
 ### Staged GlobalToken Follow-up
 
-A matched 300-step follow-up initialized the residual at `0.05`, trained only the `longer_lite` branch for 75 steps, and then switched to low-rate joint adaptation for 225 steps. On seed 42, MUSE control reached `0.578522` GAUC and GlobalToken staged reached `0.581907` (`+0.003385`). On seed 2026, the corresponding scores were `0.581115` and `0.584669` (`+0.003554`). The staged run passed the pre-registered promotion gate on both seeds; larger-data validation is next.
+A matched 300-step follow-up initialized the residual at `0.05`, trained only the `longer_lite` branch for 75 steps, and then switched to low-rate joint adaptation for 225 steps. On the 1% split, staged improved GAUC by `+0.003385` on seed 42 and `+0.003554` on seed 2026. On a user-consistent 10% split, seed-2026 control reached `0.568999` and staged reached `0.574135` (`+0.005136`), with AUC improving by `+0.006609` and LogLoss decreasing by `0.020816`.
 
 ## Reproduction
 
@@ -85,7 +85,7 @@ Remove `config/final_smoke.json` from the command to reproduce the registered 10
 - This is a small-scale engineering study on a 1% split and one seed, not a paper-level benchmark or an industrial deployment result.
 - TWIN, ETA, and LONGER contribute design ideas only; this repository does not claim faithful or complete reproduction of any of them.
 - The current data path is limited to 1,000 historical events. It neither supports 100K sequences nor timestamp-aware temporal modeling.
-- The earlier 100-step extensions did not improve their matched control; the staged 300-step GlobalToken follow-up improved the low-LR control by `+0.003385` on seed 42 and `+0.003554` on seed 2026, both on the 1% split.
+- The earlier 100-step extensions did not improve their matched control; staged GlobalToken improved GAUC on both 1% seeds and by `+0.005136` on the 10% seed-2026 validation.
 - The ETA candidate-size sweep found no operating point that both preserved GAUC within `0.0005` and accelerated exact CP retrieval.
 - Reported latency is retrieval-stage latency on the development setup, not end-to-end serving latency.
 

@@ -97,3 +97,16 @@ The second seed re-created the MUSE warm-up checkpoint with `seed=2026`, then ra
 | GlobalToken staged | 2026 | 0.584669 | 0.608174 | 0.390996 | +0.003554 | `logs/global_token_staged_300_dev_1pct_seed2026_20260730_run2.log` |
 
 The staged delta is positive on both seeds: `+0.003385` for seed 42 and `+0.003554` for seed 2026. This supports advancing to a larger-data check, but it is still not a full-data or production claim.
+
+## 10% Data Validation
+
+A deterministic user-consistent 10% subset was created with `user_id % 10 == 0`: 7,592,889 training rows and 2,297,865 test rows. The seed-2026 MUSE warm-up used 3,600 train steps and 1,100 evaluation steps. Both continuations then used the same warm-up checkpoint, 300 train steps, and 1,100 evaluation steps.
+
+| Experiment | GAUC | AUC | LogLoss | Delta vs control | Log |
+|---|---:|---:|---:|---:|---|
+| MUSE low-LR control | 0.568999 | 0.595938 | 0.454544 | 0 | `logs/muse_low_lr_300_10pct_seed2026_20260730_run1.log` |
+| GlobalToken staged | 0.574135 | 0.602547 | 0.433728 | +0.005136 | `logs/global_token_staged_300_10pct_seed2026_20260730_run1.log` |
+
+The staged model also improves AUC by `+0.006609` and lowers LogLoss by `0.020816`. This larger-data result passes the non-negative promotion gate and supports considering a full-data run. It remains one seed on a 10% subset, not an online or production result.
+
+The first 10% launch used a missing relative data path and did not train. Two later warm-up attempts used near-exhaustive DDP step caps and stalled when rank-local iterable lengths diverged at the shard tail. They are excluded. The valid protocol caps training/evaluation at 3,600/1,100 steps, safely below both ranks' available batches; the matched control and staged runs use the same cap.
