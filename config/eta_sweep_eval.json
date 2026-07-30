@@ -1,0 +1,9 @@
+{
+    "exp_name": "eta_sweep_eval_1pct",
+    "job_type": "eval",
+    "max_eval_steps": 111,
+    "retrieval_timing_warmup_steps": 2,
+    "dense_ckpt_path": "./ckpt/muse_warmup_dev_1pct_dense.ckpt",
+    "sparse_ckpt_path": "./ckpt/muse_warmup_dev_1pct_sparse.ckpt",
+    "save_ckpt": false
+}

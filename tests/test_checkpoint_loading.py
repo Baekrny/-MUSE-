@@ -65,6 +65,15 @@ def test_use_ddp_cli_flag_is_explicit_true():
     assert namespace.use_ddp is True
 
 
+def test_hash_shortlist_cli_override_is_integer():
+    parser = build_arg_parser()
+
+    namespace, remaining = parser.parse_known_args(["--hash_shortlist", "400"])
+
+    assert namespace.hash_shortlist == 400
+    assert remaining == []
+
+
 def test_load_warm_start_models_disables_internal_barriers():
     class RecordingModel:
         def __init__(self):

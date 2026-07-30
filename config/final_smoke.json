@@ -1,0 +1,6 @@
+{
+    "exp_name": "final_two_gpu_smoke",
+    "max_train_steps": 2,
+    "max_eval_steps": 2,
+    "save_ckpt": false
+}

@@ -3,6 +3,10 @@ from torch import nn
 from torch.nn import functional as F
 
 
+def should_time_retrieval(batch_index, warmup_steps):
+    return batch_index >= warmup_steps
+
+
 class RandomProjectionHash(nn.Module):
     def __init__(self, input_dim, bits, seed):
         super().__init__()

@@ -366,6 +366,7 @@ def build_arg_parser():
     parser.add_argument('--embedding_dim', type=int, help='Embedding dimension')
     parser.add_argument('--method', type=str, help='Method name: e.g., muse')
     parser.add_argument('--exp_name', type=str, help='Exp name')
+    parser.add_argument('--hash_shortlist', type=int, help='ETA hash shortlist size')
     parser.add_argument('--shuffle', action='store_true', help='Shuffle data')
     parser.add_argument('--shuffle_buffer_size', type=int, help='Shuffle buffer size')
     parser.add_argument('--use_ddp', action='store_true', default=None, help='Use DDP for distributed training')

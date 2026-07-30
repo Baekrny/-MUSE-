@@ -3,9 +3,16 @@ import torch
 from utils.hash_retrieval import (
     RandomProjectionHash,
     hamming_topk,
+    should_time_retrieval,
     target_history_cosine,
     topk_recall,
 )
+
+
+def test_retrieval_timing_starts_after_warmup_batches():
+    assert not should_time_retrieval(batch_index=0, warmup_steps=2)
+    assert not should_time_retrieval(batch_index=1, warmup_steps=2)
+    assert should_time_retrieval(batch_index=2, warmup_steps=2)
 
 
 def test_seeded_hash_and_padding_safe_retrieval_recall():

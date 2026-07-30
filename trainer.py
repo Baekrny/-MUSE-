@@ -11,6 +11,7 @@ from utils.horizon import build_eligible_mask, overlap_summary
 from utils.hash_retrieval import (
     RandomProjectionHash,
     hamming_topk,
+    should_time_retrieval,
     target_history_cosine,
     topk_recall,
 )
@@ -360,6 +361,13 @@ class Trainer:
                     self.eval_diagnostics is not None
                     and self.args.get("collect_retrieval_diagnostics", False)
                 )
+                collect_eta_timing = (
+                    collect_eta_diagnostics
+                    and should_time_retrieval(
+                        self._batch_index,
+                        self.args.get("retrieval_timing_warmup_steps", 0),
+                    )
+                )
 
                 def hash_search():
                     query_code = self.hash_retriever(query)
@@ -371,16 +379,16 @@ class Trainer:
                         keep_top=self.args["hash_shortlist"],
                     )
 
-                if collect_eta_diagnostics:
+                if collect_eta_timing:
                     hash_start, hash_end = self._start_retrieval_timer()
                 shortlist_indices, shortlist_invalid = hash_search()
-                if collect_eta_diagnostics:
+                if collect_eta_timing:
                     hash_ms = self._stop_retrieval_timer(hash_start, hash_end)
 
                 shortlist_batch = torch.arange(
                     query.shape[0], device=query.device
                 ).unsqueeze(1).expand_as(shortlist_indices)
-                if collect_eta_diagnostics:
+                if collect_eta_timing:
                     rerank_start, rerank_end = self._start_retrieval_timer()
                 shortlist_fact = fact[shortlist_batch, shortlist_indices]
                 shortlist_mm_cosine = target_history_cosine(
@@ -400,10 +408,11 @@ class Trainer:
                 top_k_indices = shortlist_indices.gather(1, rerank_indices)
                 invalid_mask |= shortlist_invalid.gather(1, rerank_indices)
                 if collect_eta_diagnostics:
-                    rerank_ms = self._stop_retrieval_timer(
-                        rerank_start, rerank_end
-                    )
-                    exact_start, exact_end = self._start_retrieval_timer()
+                    if collect_eta_timing:
+                        rerank_ms = self._stop_retrieval_timer(
+                            rerank_start, rerank_end
+                        )
+                        exact_start, exact_end = self._start_retrieval_timer()
                     full_mm_cosine = target_history_cosine(
                         target_content_emb, uni_seq_content_emb
                     )
@@ -415,18 +424,20 @@ class Trainer:
                         mm_cosine=[full_mm_cosine],
                         keep_top=keep_top,
                     )
-                    exact_ms = self._stop_retrieval_timer(exact_start, exact_end)
+                    if collect_eta_timing:
+                        exact_ms = self._stop_retrieval_timer(exact_start, exact_end)
                     recall = topk_recall(
                         exact_indices, shortlist_indices, exact_invalid
                     )
                     batch_size = query.shape[0]
                     self.eval_diagnostics[6] += recall.double() * batch_size
                     self.eval_diagnostics[7] += batch_size
-                    self.eval_diagnostics[8] += hash_ms
-                    self.eval_diagnostics[9] += rerank_ms
-                    self.eval_diagnostics[10] += hash_ms + rerank_ms
-                    self.eval_diagnostics[11] += exact_ms
-                    self.eval_diagnostics[12] += 1
+                    if collect_eta_timing:
+                        self.eval_diagnostics[8] += hash_ms
+                        self.eval_diagnostics[9] += rerank_ms
+                        self.eval_diagnostics[10] += hash_ms + rerank_ms
+                        self.eval_diagnostics[11] += exact_ms
+                        self.eval_diagnostics[12] += 1
             else:
                 full_mm_cosine = target_history_cosine(
                     target_content_emb, uni_seq_content_emb
@@ -614,9 +625,10 @@ class Trainer:
             )
         if eta_timing_count > 0:
             logging.info(
-                "[Diagnostics] ETARecall@200=%.6f "
+                "[Diagnostics] ETARecall@%d=%.6f "
                 "ETAHashHammingMs=%.3f ETAGatherRerankMs=%.3f "
                 "ETATotalMs=%.3f FullExactCPMs=%.3f",
+                self.args["hash_shortlist"],
                 eta_recall_sum / max(eta_recall_count, 1.0),
                 eta_hash_ms / eta_timing_count,
                 eta_rerank_ms / eta_timing_count,
