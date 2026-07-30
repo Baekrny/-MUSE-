@@ -51,7 +51,7 @@ ETA-CP-MUSE 的 `Recall@200=0.367484`。检索阶段耗时从 exact CP 的 `4.25
 
 基于共同 warm-up checkpoint 的纯推理候选扫描进一步验证了该权衡：K=100/200/400 分别取得 `1.91x`/`1.66x`/`1.16x` 检索阶段加速，但相对 K=1000 全候选参考分别损失 `0.008971`/`0.007665`/`0.005434` GAUC。K=800 将损失缩小到 `0.001594`，但速度已经慢于 exact CP。没有任何测试点同时满足 `GAUC 损失不超过 0.0005` 和检索加速要求。
 
-旧的 100-step 架构相对 control 的 delta 没有达到预注册的 `+0.0005` 晋级门槛；后续 staged 300-step 实验已达到该门槛，但第二个 seed 尚未运行，因此暂不扩大到更大数据。
+旧的 100-step 架构相对 control 的 delta 没有达到预注册的 `+0.0005` 晋级门槛；后续 staged 300-step 实验已在两个 seed 上达到该门槛，下一步进入更大数据验证。
 
 ## 复现
 
@@ -82,7 +82,7 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 | GlobalToken joint | 0.578873 | +0.000351 |
 | GlobalToken staged | 0.581907 | +0.003385 |
 
-staged 比 joint 高 `+0.003034` GAUC，达到预注册的 `+0.0005` 晋级门槛。该结果仍来自 1% 数据、单 seed，第二 seed 尚未运行，不能直接表述为稳定泛化收益。
+staged 比 joint 高 `+0.003034` GAUC，达到预注册的 `+0.0005` 晋级门槛。seed 2026 上 staged 相对 control 进一步提升 `+0.003554`。两个结果都来自 1% 数据，下一步需要更大数据验证，不能直接表述为线上收益。
 
 ```bash
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/muse_low_lr_300_dev.json
@@ -92,10 +92,10 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 
 ## 局限与负向结果
 
-- 仅完成 1% 数据、单 seed 的开发实验，不等同于论文级复现或线上结论。
+- 当前完成 1% 数据、两个 seed 的开发实验，不等同于论文级复现或线上结论。
 - 没有完整实现 TWIN、ETA、LONGER，也没有复刻其工业特征、训练规模和服务系统。
 - 当前数据链路只支持 1K 历史，不支持 100K；数据没有时间戳，无法验证时间间隔建模。
-- 旧的 100-step 增强变体没有超过对应 control；新的 staged 300-step 结果相对低学习率 control 提升 `+0.003385`，但仍只有单 seed、1% 数据证据。
+- 旧的 100-step 增强变体没有超过对应 control；新的 staged 300-step 结果在 seed 42 和 seed 2026 上分别提升 `+0.003385` 和 `+0.003554`。
 - ETA 的加速只覆盖检索阶段，不是端到端推理延迟；低 Recall 带来了明显 GAUC 损失。
 - ETA 候选规模扫描没有找到同时满足 `GAUC 损失不超过 0.0005` 和 exact CP 加速的 operating point。
 - 显存峰值来自 `nvidia-smi` 采样，不是 profiler 的精确峰值。

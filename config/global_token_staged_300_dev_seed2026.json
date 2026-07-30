@@ -1,0 +1,6 @@
+{
+    "exp_name": "global_token_staged_300_dev_1pct_seed2026",
+    "seed": 2026,
+    "warm_start_dense_ckpt": "./ckpt/muse_warmup_dev_1pct_seed2026_dense.ckpt",
+    "warm_start_sparse_ckpt": "./ckpt/muse_warmup_dev_1pct_seed2026_sparse.ckpt"
+}

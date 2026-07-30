@@ -29,7 +29,7 @@
 | GlobalToken joint | 0.578873 | 0.602621 | 0.394256 | +0.000351 |
 | GlobalToken staged | 0.581907 | 0.606298 | 0.391152 | +0.003385 |
 
-GlobalToken staged 比 joint 高 `+0.003034`，并超过预注册 `+0.0005` 晋级门槛。下一步应运行第二 seed；在第二 seed 之前不扩大到 5%、10% 或全量数据。
+GlobalToken staged 在 seed 42 上比 joint 高 `+0.003034`，相对 control 提升 `+0.003385`；在 seed 2026 上相对匹配 control 提升 `+0.003554`。两个 seed 均超过预注册 `+0.0005` 晋级门槛。
 
 ## 实验协议
 
@@ -94,6 +94,6 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py \
 
 ## 后续待完成
 
-1. 使用相同 1% 划分运行第二个 seed。
-2. 只有第二 seed 仍达到晋级门槛时，才运行 5% 或 10% 验证。
-3. 更新简历表述，明确这是单 seed 开发集结果，避免过度宣称。
+1. 在 5% 或 10% 数据上运行匹配 control 和 staged 验证。
+2. 只有更大数据验证仍为正向时，才考虑全量训练。
+3. 更新简历表述，明确当前是 1% 数据、两个 seed 的开发集结果，避免过度宣称。

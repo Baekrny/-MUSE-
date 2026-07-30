@@ -73,7 +73,7 @@ To isolate the approximation trade-off from training, all points below load the 
 
 K=100 is the fastest point, but its GAUC loss is `0.008971`. K=800 is the closest tested approximation to the full-shortlist quality reference, but it still loses `0.001594` GAUC and is slower than exact CP. Therefore, no tested point satisfies the pre-registered `GAUC loss <= 0.0005` constraint while providing a retrieval-stage speedup.
 
-The earlier 100-step architecture adaptations and the ETA operating-point sweep did not pass their respective promotion gates. The staged 300-step GlobalToken follow-up below did pass its gate; second-seed confirmation is now the next accuracy-oriented step before increasing data scale.
+The earlier 100-step architecture adaptations and the ETA operating-point sweep did not pass their respective promotion gates. The staged 300-step GlobalToken follow-up passed its gate on both tested seeds; the next accuracy-oriented step is a larger-data validation.
 
 ## GlobalToken Staged Follow-up
 
@@ -85,4 +85,15 @@ The follow-up uses the same 1% split and warm-up checkpoint, but a matched 300-s
 | GlobalToken joint | 300 | 0.578873 | 0.602621 | 0.394256 | +0.000351 | `logs/global_token_joint_300_dev_1pct_20260730_run1.log` |
 | GlobalToken staged | 300 | 0.581907 | 0.606298 | 0.391152 | +0.003385 | `logs/global_token_staged_300_dev_1pct_20260730_run1.log` |
 
-The staged run passed the pre-registered `+0.0005` promotion gate and exceeded joint training by `+0.003034` GAUC. The log confirms the branch-only to joint transition at step 75. This is a promising single-seed 1% development result, not yet a paper-level or full-data claim; second-seed confirmation is the next gated experiment.
+The seed-42 staged run passed the pre-registered `+0.0005` promotion gate and exceeded joint training by `+0.003034` GAUC. The log confirms the branch-only to joint transition at step 75. The independent seed-2026 confirmation is reported below.
+
+### Seed-2026 Confirmation
+
+The second seed re-created the MUSE warm-up checkpoint with `seed=2026`, then ran the matched low-LR control and staged winner for 300 training steps and 111 evaluation steps on the same 1% split.
+
+| Experiment | Seed | GAUC | AUC | LogLoss | Delta vs control | Log |
+|---|---:|---:|---:|---:|---:|---|
+| MUSE low-LR control | 2026 | 0.581115 | 0.603586 | 0.394767 | 0 | `logs/muse_low_lr_300_dev_1pct_seed2026_20260730_run2.log` |
+| GlobalToken staged | 2026 | 0.584669 | 0.608174 | 0.390996 | +0.003554 | `logs/global_token_staged_300_dev_1pct_seed2026_20260730_run2.log` |
+
+The staged delta is positive on both seeds: `+0.003385` for seed 42 and `+0.003554` for seed 2026. This supports advancing to a larger-data check, but it is still not a full-data or production claim.

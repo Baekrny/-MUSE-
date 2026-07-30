@@ -2,7 +2,7 @@
 
 ## 结论先行
 
-当前结果来自 TAOBAO-MM 的 user-consistent 1% 开发集，而不是 139 GB 全量数据。所有架构改进均使用同一个 MUSE warm-up checkpoint、相同随机种子和相同训练预算。GlobalToken-LongerLite 与严格匹配的 MUSE 对照基本持平，但没有任何改进达到预注册的 `GAUC +0.0005` 晋级门槛，因此没有继续第二随机种子和全量训练。
+当前结果来自 TAOBAO-MM 的 user-consistent 1% 开发集，而不是 139 GB 全量数据。每个 seed 都使用各自重新训练的 MUSE warm-up checkpoint，并保持模型间训练预算一致。GlobalToken staged 在 seed 42 和 seed 2026 上均达到预注册的 `GAUC +0.0005` 晋级门槛，因此可以进入更大数据验证。
 
 ## 实验协议
 
@@ -87,7 +87,7 @@ ETA-CP-MUSE 使用固定的 32-bit 随机投影哈希，从 1,000 条历史中�
 
 K=100 最快，但 GAUC 损失达到 `0.008971`；K=800 是最接近全候选质量参考的近似点，但仍损失 `0.001594` GAUC，且速度已经慢于 exact CP。因此，当前扫描中没有候选点能同时满足预注册的 `GAUC 损失不超过 0.0005` 和检索阶段加速要求。
 
-由于架构适配和 ETA operating point 扫描都没有通过晋级门槛，当前实现不建议继续 10% 或全量数据训练。下一轮如果继续追求精度，应先改进候选生成方法，再扩大数据规模。
+由于旧架构适配和 ETA operating point 扫描没有通过晋级门槛，之前没有扩大数据规模；staged 300-step GlobalToken 已在两个 seed 上通过门槛，下一步进入更大数据验证。
 
 ## GlobalToken 分阶段训练结果
 
@@ -99,7 +99,18 @@ K=100 最快，但 GAUC 损失达到 `0.008971`；K=800 是最接近全候选质
 | GlobalToken joint | 300 | 0.578873 | 0.602621 | 0.394256 | +0.000351 | `logs/global_token_joint_300_dev_1pct_20260730_run1.log` |
 | GlobalToken staged | 300 | 0.581907 | 0.606298 | 0.391152 | +0.003385 | `logs/global_token_staged_300_dev_1pct_20260730_run1.log` |
 
-staged 相对 control 通过预注册的 `+0.0005` 晋级门槛，并比 joint 高 `+0.003034` GAUC。日志确认第 75 step 完成 branch-only 到 joint 的切换。这是有潜力的单 seed、1% 开发集结果，不是论文级或全量数据结论；下一步仍需第二个 seed 验证。
+staged 相对 control 通过预注册的 `+0.0005` 晋级门槛，并比 joint 高 `+0.003034` GAUC。日志确认第 75 step 完成 branch-only 到 joint 的切换。
+
+### 第二 seed 验证
+
+第二个 seed 使用 `seed=2026` 重新训练 MUSE warm-up checkpoint，然后在同一个 1% 划分上运行匹配的 300-step control 和 staged 实验：
+
+| 实验 | GAUC | AUC | LogLoss | 相对 control | 日志 |
+|---|---:|---:|---:|---:|---|
+| MUSE low-LR control | 0.581115 | 0.603586 | 0.394767 | 0 | `logs/muse_low_lr_300_dev_1pct_seed2026_20260730_run2.log` |
+| GlobalToken staged | 0.584669 | 0.608174 | 0.390996 | +0.003554 | `logs/global_token_staged_300_dev_1pct_seed2026_20260730_run2.log` |
+
+staged 在两个 seed 上均取得正向 GAUC delta：seed 42 为 `+0.003385`，seed 2026 为 `+0.003554`。这支持进入更大数据验证，但仍不能表述为全量数据或线上收益。
 
 ## 异常运行说明
 
@@ -109,14 +120,14 @@ staged 相对 control 通过预注册的 `+0.0005` 晋级门槛，并比 joint �
 
 ## 停止规则与最终选择
 
-预注册规则要求最佳架构相对匹配训练预算的 MUSE control 至少提升 `GAUC +0.0005`，才进入第二随机种子和更大数据验证。GlobalToken staged 的变化为 `+0.003385`，达到门槛；第二 seed 尚未运行，不能直接声明泛化收益。
+预注册规则要求最佳架构相对匹配训练预算的 MUSE control 至少提升 `GAUC +0.0005`，才进入第二随机种子和更大数据验证。GlobalToken staged 在 seed 42 和 seed 2026 上分别提升 `+0.003385` 和 `+0.003554`，均达到门槛；下一步可以进行更大数据验证。
 
 最终保留 GlobalToken staged 作为当前最有潜力的 LONGER 风格探索方案；旧的 100-step 变体仍只作为负向消融结果记录。ETA-CP-MUSE 仅作为可量化的检索效率权衡实验。
 
 ## 结果边界
 
-- 只完成 1% 数据、单随机种子的开发实验，不是全量 TAOBAO-MM 训练。
+- 当前完成的是 1% 数据、两个随机种子的开发实验，不是全量 TAOBAO-MM 训练。
 - 当前序列长度为 1,000，不支持 LONGER 论文中的 100K 级历史。
 - 公开数据路径没有事件时间戳，未验证时间间隔编码或时间阶段划分。
 - TWIN、ETA 和 LONGER 只提供设计思想，本项目不声称完整复现这些系统。
-- 旧的 100-step 增强变体未超过对应 control；新的 staged 300-step 结果仍只有单 seed、1% 数据证据。
+- 旧的 100-step 增强变体未超过对应 control；新的 staged 300-step 结果在两个 seed、1% 数据上均超过对应 control。
