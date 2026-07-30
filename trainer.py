@@ -8,6 +8,12 @@ import torch.distributed as dist
 
 from utils.utils import sim_mm_top_k, sim_hard_top_k, sim_soft_top_k, calc_auc_gpu, calc_gauc_gpu, write_info_to_file, _confusion_matrix_at_thresholds, calc_auroc_gpu
 from utils.horizon import build_eligible_mask, overlap_summary
+from utils.hash_retrieval import (
+    RandomProjectionHash,
+    hamming_topk,
+    target_history_cosine,
+    topk_recall,
+)
 
 def masked_relevance_topk(score, valid, keep_top):
     valid = valid.to(device=score.device, dtype=torch.bool)
@@ -105,6 +111,13 @@ class Trainer:
         self._batch_index = 0
         self._total_steps = 0
         self.eval_diagnostics = None
+        self.hash_retriever = None
+        if self.args["method"] == "eta-cp-muse":
+            self.hash_retriever = RandomProjectionHash(
+                input_dim=2 * self.args["embedding_dim"],
+                bits=self.args["hash_bits"],
+                seed=self.args["hash_seed"],
+            ).to(self.device)
 
         # prepare id_count, assosiated with update_count() function
         # L = len(self.sparse_model.module.feature_maps["150_2_180"])
@@ -274,7 +287,7 @@ class Trainer:
 
         eval_loss = 0
         self.init_metric()
-        self.eval_diagnostics = torch.zeros(6, dtype=torch.float64, device=self.device)
+        self.eval_diagnostics = torch.zeros(13, dtype=torch.float64, device=self.device)
 
         if hasattr(self.test_dataloader.dataset, 'set_epoch'):
             self.test_dataloader.dataset.set_epoch(0)
@@ -305,7 +318,7 @@ class Trainer:
     @torch.no_grad()
     def apply_general_search(self, batch, keep_top=50):
         top_k_embs = dict()
-        if self.args["method"] == "cp-muse":
+        if self.args["method"] in ["cp-muse", "eta-cp-muse"]:
             retrieval_fn = [
                 "205",
                 "206",
@@ -330,15 +343,6 @@ class Trainer:
             )
             target_content_emb = retrieval_embs["205_c"].unsqueeze(1)
             uni_seq_content_emb = retrieval_embs["150_2_180_c"]
-            target_content_norm = torch.nn.functional.normalize(
-                target_content_emb, dim=-1
-            )
-            uni_seq_content_norm = torch.nn.functional.normalize(
-                uni_seq_content_emb, dim=-1
-            )
-            mm_cosine = torch.bmm(
-                target_content_norm, uni_seq_content_norm.transpose(-1, -2)
-            ).squeeze(1)
 
             valid_mask = batch["150_2_180"] != 0
             eligible_mask = build_eligible_mask(
@@ -351,14 +355,90 @@ class Trainer:
                 if hasattr(self.dense_model, "module")
                 else self.dense_model
             )
-            top_k_indices, invalid_mask = cp_relevance_topk(
-                dense_model.uni_att_v2,
-                query,
-                fact,
-                eligible_mask,
-                mm_cosine=[mm_cosine],
-                keep_top=keep_top,
-            )
+            if self.args["method"] == "eta-cp-muse":
+                collect_eta_diagnostics = (
+                    self.eval_diagnostics is not None
+                    and self.args.get("collect_retrieval_diagnostics", False)
+                )
+
+                def hash_search():
+                    query_code = self.hash_retriever(query)
+                    history_code = self.hash_retriever(fact)
+                    return hamming_topk(
+                        query_code,
+                        history_code,
+                        eligible_mask,
+                        keep_top=self.args["hash_shortlist"],
+                    )
+
+                if collect_eta_diagnostics:
+                    hash_start, hash_end = self._start_retrieval_timer()
+                shortlist_indices, shortlist_invalid = hash_search()
+                if collect_eta_diagnostics:
+                    hash_ms = self._stop_retrieval_timer(hash_start, hash_end)
+
+                shortlist_batch = torch.arange(
+                    query.shape[0], device=query.device
+                ).unsqueeze(1).expand_as(shortlist_indices)
+                if collect_eta_diagnostics:
+                    rerank_start, rerank_end = self._start_retrieval_timer()
+                shortlist_fact = fact[shortlist_batch, shortlist_indices]
+                shortlist_mm_cosine = target_history_cosine(
+                    target_content_emb,
+                    uni_seq_content_emb,
+                    indices=shortlist_indices,
+                )
+                shortlist_valid = ~shortlist_invalid
+                rerank_indices, invalid_mask = cp_relevance_topk(
+                    dense_model.uni_att_v2,
+                    query,
+                    shortlist_fact,
+                    shortlist_valid,
+                    mm_cosine=[shortlist_mm_cosine],
+                    keep_top=keep_top,
+                )
+                top_k_indices = shortlist_indices.gather(1, rerank_indices)
+                invalid_mask |= shortlist_invalid.gather(1, rerank_indices)
+                if collect_eta_diagnostics:
+                    rerank_ms = self._stop_retrieval_timer(
+                        rerank_start, rerank_end
+                    )
+                    exact_start, exact_end = self._start_retrieval_timer()
+                    full_mm_cosine = target_history_cosine(
+                        target_content_emb, uni_seq_content_emb
+                    )
+                    exact_indices, exact_invalid = cp_relevance_topk(
+                        dense_model.uni_att_v2,
+                        query,
+                        fact,
+                        eligible_mask,
+                        mm_cosine=[full_mm_cosine],
+                        keep_top=keep_top,
+                    )
+                    exact_ms = self._stop_retrieval_timer(exact_start, exact_end)
+                    recall = topk_recall(
+                        exact_indices, shortlist_indices, exact_invalid
+                    )
+                    batch_size = query.shape[0]
+                    self.eval_diagnostics[6] += recall.double() * batch_size
+                    self.eval_diagnostics[7] += batch_size
+                    self.eval_diagnostics[8] += hash_ms
+                    self.eval_diagnostics[9] += rerank_ms
+                    self.eval_diagnostics[10] += hash_ms + rerank_ms
+                    self.eval_diagnostics[11] += exact_ms
+                    self.eval_diagnostics[12] += 1
+            else:
+                full_mm_cosine = target_history_cosine(
+                    target_content_emb, uni_seq_content_emb
+                )
+                top_k_indices, invalid_mask = cp_relevance_topk(
+                    dense_model.uni_att_v2,
+                    query,
+                    fact,
+                    eligible_mask,
+                    mm_cosine=[full_mm_cosine],
+                    keep_top=keep_top,
+                )
             batch_indices = torch.arange(
                 query.shape[0], device=query.device
             ).unsqueeze(1).expand(-1, keep_top)
@@ -503,7 +583,21 @@ class Trainer:
             dist.all_reduce(diagnostics, op=dist.ReduceOp.SUM)
         if not self.is_main_process:
             return
-        recent, selected, expected, gate_sum, gate_square_sum, gate_count = diagnostics.tolist()
+        (
+            recent,
+            selected,
+            expected,
+            gate_sum,
+            gate_square_sum,
+            gate_count,
+            eta_recall_sum,
+            eta_recall_count,
+            eta_hash_ms,
+            eta_rerank_ms,
+            eta_total_ms,
+            eta_exact_ms,
+            eta_timing_count,
+        ) = diagnostics.tolist()
         if selected > 0:
             logging.info(
                 "[Diagnostics] RecentOverlap=%.6f RecentEnrichment=%.6f",
@@ -518,6 +612,32 @@ class Trainer:
                 gate_mean,
                 gate_variance ** 0.5,
             )
+        if eta_timing_count > 0:
+            logging.info(
+                "[Diagnostics] ETARecall@200=%.6f "
+                "ETAHashHammingMs=%.3f ETAGatherRerankMs=%.3f "
+                "ETATotalMs=%.3f FullExactCPMs=%.3f",
+                eta_recall_sum / max(eta_recall_count, 1.0),
+                eta_hash_ms / eta_timing_count,
+                eta_rerank_ms / eta_timing_count,
+                eta_total_ms / eta_timing_count,
+                eta_exact_ms / eta_timing_count,
+            )
+
+    def _start_retrieval_timer(self):
+        if self.thresholds.is_cuda:
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            return start, end
+        return time.perf_counter(), None
+
+    def _stop_retrieval_timer(self, start, end):
+        if end is not None:
+            end.record()
+            end.synchronize()
+            return start.elapsed_time(end)
+        return (time.perf_counter() - start) * 1000.0
 
     def init_metric(self):
         self.accumulated_metric = {

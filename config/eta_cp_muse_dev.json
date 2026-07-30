@@ -1,0 +1,7 @@
+{
+    "exp_name": "eta_cp_muse_dev_1pct",
+    "method": "eta-cp-muse",
+    "hash_bits": 32,
+    "hash_shortlist": 200,
+    "hash_seed": 42
+}

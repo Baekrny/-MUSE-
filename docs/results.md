@@ -17,8 +17,9 @@
 | GroupPool-TA | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.582925 | 0.606261 | 0.391452 | 17.24* | 5.59 | logs/group_pool_dev_1pct.log |
 | InnerTrans-TA | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.582953 | 0.606369 | 0.391422 | 19.99* | 5.80 | logs/inner_trans_dev_1pct_retry1.log |
 | GlobalToken-LongerLite | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.583169 | 0.606336 | 0.391455 | 19.69* | 6.24 | logs/global_token_dev_1pct.log |
+| ETA-CP-MUSE | 42 | ckpt/muse_warmup_dev_1pct_{dense,sparse}.ckpt | 0.576405 | 0.601245 | 0.393025 | 16.14* | 5.75** | logs/eta_cp_muse_dev_1pct.log |
 
-N/M = not measured. `17.24*` is the highest sampled per-GPU allocation from `nvidia-smi`, not a profiler-derived peak.
+N/M = not measured. Values marked `*` are the highest sampled per-GPU allocations from `nvidia-smi`, not profiler-derived peaks. `5.75**` includes the additional full-exact diagnostic pass and is not an online ETA throughput measurement.
 
 The failed pre-run log `logs/sim_hard_dev_1pct.log` exposed the CLI `use_ddp` override and is excluded from metrics.
 
@@ -36,6 +37,7 @@ The failed InnerTrans pre-run `logs/inner_trans_dev_1pct.log` hit a CUDA SDPA ke
 | GroupPool-TA | -0.000246 vs 100-step MUSE continuation | Keep as a runnable LONGER-inspired compression baseline; proceed to the pre-registered InnerTrans comparison. |
 | GlobalToken exploration | InnerTrans-TA -0.000218 vs 100-step MUSE continuation | Passes the pre-registered -0.001 gate; retain the GlobalToken ablation. |
 | GlobalToken result | -0.000002 vs 100-step MUSE continuation | Numerically matches the control; keep as the most stable LONGER-inspired variant without claiming an accuracy gain. |
+| ETA result | -0.006766 vs 100-step MUSE continuation | Hash Top-200 recall is too low for the final model; keep only as a measured recall-efficiency trade-off. |
 
 CP-MUSE used the same train/evaluation budget as the short continuation control. Its retrieval diagnostics were `RecentOverlap=0.102177` and `RecentEnrichment=1.903319`, showing that the shared SA-TA scorer concentrates selected candidates in the recent window more strongly than its prevalence in the eligible history. This is a retrieval-distribution observation, not evidence of an accuracy gain.
 
@@ -44,3 +46,5 @@ GroupPool-TA adds 42,305 dense parameters and compresses the full 1,000-event hi
 InnerTrans-TA adds 50,849 dense parameters in total and applies one shared local Transformer layer independently inside each four-event group before pooling. It remained within an observed 19.99 GB per GPU and produced the best GAUC among the three adaptations, but its delta against the short MUSE continuation remained negative.
 
 GlobalToken-LongerLite adds 71,137 dense parameters in total. Target, user, CLS, and the most recent 100 merged tokens read all 250 history tokens, while the history representation never reads target or user features. Its GAUC matched the control to six decimal places; because the branch uses a zero-initialized residual scale, this result demonstrates stable integration and directional full-history access, not a proven accuracy contribution from the new branch.
+
+ETA-CP-MUSE uses a fixed 32-bit random-projection hash to shortlist 200 of 1,000 events, then applies the same CP-MUSE SA-TA scorer to select 50. It achieved `Recall@200=0.367484`; the measured retrieval stage fell from `4.259 ms` for full exact CP to `2.590 ms` for hash plus candidate reranking, a 1.64x retrieval-stage speedup (39.2% lower latency), excluding the embedding lookup shared by both paths. The substantial GAUC loss means this is an efficiency ablation, not the selected model or an end-to-end serving speedup claim.
