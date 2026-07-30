@@ -72,6 +72,16 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config conf
 
 复现 100-step 正式协议时移除最后的 `config/final_smoke.json`。ETA 实验将中间的变体配置替换为 `config/eta_cp_muse_dev.json`。
 
+### GlobalToken 分阶段适配（待运行）
+
+为检验零初始化残差导致的新分支梯度抑制，项目准备了三组 300-step 等预算实验。MUSE 与 GlobalToken joint 均使用较低学习率；staged 方案将残差初始化为 `0.05`，前 75 step 只训练 `longer_lite`，后 225 step 解冻全部参数并切换到低学习率联合训练。该部分尚未产生 GPU 结果，不能作为精度提升声明。
+
+```bash
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/muse_low_lr_300_dev.json
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/global_token_joint_300_dev.json
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 main.py --config config/muse_continue_short_dev.json config/global_token_staged_300_dev.json
+```
+
 ## 局限与负向结果
 
 - 仅完成 1% 数据、单 seed 的开发实验，不等同于论文级复现或线上结论。

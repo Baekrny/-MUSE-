@@ -6,13 +6,22 @@ from torch import nn
 
 
 class GroupPoolTA(nn.Module):
-    def __init__(self, input_dim, model_dim, max_len, group_size):
+    def __init__(
+        self, input_dim, model_dim, max_len, group_size, residual_init=0.0
+    ):
         super().__init__()
+        if (
+            isinstance(residual_init, bool)
+            or not isinstance(residual_init, (int, float))
+            or not math.isfinite(residual_init)
+        ):
+            raise ValueError("residual_init must be a finite number")
         self.token_projection = nn.Linear(input_dim, model_dim)
         self.position_embedding = nn.Embedding(max_len, model_dim)
         self.target_projection = nn.Linear(input_dim, model_dim)
         self.residual_scale = nn.Parameter(torch.zeros(()))
         self.group_size = group_size
+        self.residual_init = float(residual_init)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -21,7 +30,7 @@ class GroupPoolTA(nn.Module):
         nn.init.normal_(self.position_embedding.weight, mean=0.0, std=0.02)
         nn.init.xavier_uniform_(self.target_projection.weight)
         nn.init.zeros_(self.target_projection.bias)
-        nn.init.zeros_(self.residual_scale)
+        nn.init.constant_(self.residual_scale, self.residual_init)
 
     def _project_groups(self, history, mask):
         batch_size, seq_len, _ = history.shape
@@ -89,8 +98,15 @@ class InnerTransTA(GroupPoolTA):
         group_size,
         num_heads,
         transform_chunk_size=50000,
+        residual_init=0.0,
     ):
-        super().__init__(input_dim, model_dim, max_len, group_size)
+        super().__init__(
+            input_dim,
+            model_dim,
+            max_len,
+            group_size,
+            residual_init=residual_init,
+        )
         if (
             not isinstance(transform_chunk_size, int)
             or isinstance(transform_chunk_size, bool)
@@ -152,6 +168,7 @@ class GlobalTokenLongerLite(InnerTransTA):
         recent_queries,
         num_heads,
         transform_chunk_size=50000,
+        residual_init=0.0,
     ):
         super().__init__(
             input_dim=input_dim,
@@ -160,6 +177,7 @@ class GlobalTokenLongerLite(InnerTransTA):
             group_size=group_size,
             num_heads=num_heads,
             transform_chunk_size=transform_chunk_size,
+            residual_init=residual_init,
         )
         group_count = math.ceil(max_len / group_size)
         if (

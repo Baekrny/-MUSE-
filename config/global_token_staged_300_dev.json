@@ -1,0 +1,17 @@
+{
+    "exp_name": "global_token_staged_300_dev_1pct",
+    "max_train_steps": 300,
+    "max_eval_steps": 111,
+    "dense_lr": 0.0002,
+    "sparse_lr": 0.002,
+    "longer_variant": "global-token",
+    "longer_group_size": 4,
+    "longer_model_dim": 32,
+    "longer_num_heads": 1,
+    "longer_recent_queries": 100,
+    "longer_residual_init": 0.05,
+    "staged_longer_warmup_steps": 75,
+    "staged_joint_dense_lr": 0.00005,
+    "staged_joint_sparse_lr": 0.0005,
+    "save_ckpt": false
+}

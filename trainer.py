@@ -48,6 +48,77 @@ def synchronize_after_checkpoint():
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
 
+
+def _unwrap_model(model):
+    return model.module if hasattr(model, "module") else model
+
+
+def _set_optimizer_lr(optimizer, learning_rate):
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = learning_rate
+
+
+class StagedLongerController:
+    def __init__(
+        self,
+        dense_model,
+        sparse_model,
+        dense_opt,
+        sparse_opt,
+        warmup_steps,
+        joint_dense_lr,
+        joint_sparse_lr,
+    ):
+        if not isinstance(warmup_steps, int) or warmup_steps <= 0:
+            raise ValueError("warmup_steps must be a positive integer")
+        dense_module = _unwrap_model(dense_model)
+        if not hasattr(dense_module, "longer_lite"):
+            raise ValueError("staged training requires a longer_lite branch")
+
+        self.dense_model = dense_model
+        self.sparse_model = sparse_model
+        self.dense_opt = dense_opt
+        self.sparse_opt = sparse_opt
+        self.warmup_steps = warmup_steps
+        self.joint_dense_lr = joint_dense_lr
+        self.joint_sparse_lr = joint_sparse_lr
+        self.longer_parameter_ids = {
+            id(parameter) for parameter in dense_module.longer_lite.parameters()
+        }
+        self.original_trainability = {
+            id(parameter): parameter.requires_grad
+            for parameter in list(dense_model.parameters())
+            + list(sparse_model.parameters())
+        }
+        self.started = False
+        self.transitioned = False
+
+    def start(self):
+        for parameter in self.dense_model.parameters():
+            trainable = (
+                id(parameter) in self.longer_parameter_ids
+                and self.original_trainability[id(parameter)]
+            )
+            parameter.requires_grad_(trainable)
+        for parameter in self.sparse_model.parameters():
+            parameter.requires_grad_(False)
+        self.started = True
+
+    def maybe_transition(self, step):
+        if not self.started:
+            raise RuntimeError("staged controller must be started first")
+        if self.transitioned or step < self.warmup_steps:
+            return False
+
+        for parameter in list(self.dense_model.parameters()) + list(
+            self.sparse_model.parameters()
+        ):
+            parameter.requires_grad_(self.original_trainability[id(parameter)])
+        _set_optimizer_lr(self.dense_opt, self.joint_dense_lr)
+        _set_optimizer_lr(self.sparse_opt, self.joint_sparse_lr)
+        self.transitioned = True
+        return True
+
 FEATURE_BLOCKS = {
     "ad": ["205", "206", "213", "214", "205_c"],
     "user": ["129_1", "130_1", "130_2", "130_3", "130_4", "130_5"],
@@ -112,6 +183,24 @@ class Trainer:
         self._batch_index = 0
         self._total_steps = 0
         self.eval_diagnostics = None
+        self.staged_controller = None
+        staged_warmup_steps = self.args.get("staged_longer_warmup_steps", 0)
+        if staged_warmup_steps:
+            self.staged_controller = StagedLongerController(
+                dense_model=self.dense_model,
+                sparse_model=self.sparse_model,
+                dense_opt=self.dense_opt,
+                sparse_opt=self.sparse_opt,
+                warmup_steps=staged_warmup_steps,
+                joint_dense_lr=self.args["staged_joint_dense_lr"],
+                joint_sparse_lr=self.args["staged_joint_sparse_lr"],
+            )
+            self.staged_controller.start()
+            if self.is_main_process:
+                logging.info(
+                    "Staged longer training: branch-only for %d steps",
+                    staged_warmup_steps,
+                )
         self.hash_retriever = None
         if self.args["method"] == "eta-cp-muse":
             self.hash_retriever = RandomProjectionHash(
@@ -153,6 +242,18 @@ class Trainer:
 
         for batch_index, batch_data in enumerate(self.train_dataloader):
             self._batch_index = batch_index
+            if (
+                self.staged_controller is not None
+                and self.staged_controller.maybe_transition(self._total_steps)
+                and self.is_main_process
+            ):
+                logging.info(
+                    "Staged longer training: joint phase at step %d "
+                    "(dense_lr=%g, sparse_lr=%g)",
+                    self._total_steps,
+                    self.args["staged_joint_dense_lr"],
+                    self.args["staged_joint_sparse_lr"],
+                )
             loss, metrics = self.forward_step(batch_data, mode="train")
             loss_reduced = self._reduce_tensor(loss.detach())
             train_loss = (train_loss * batch_index + loss_reduced.item()) / (batch_index + 1)

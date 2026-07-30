@@ -72,6 +72,7 @@ class MUSE_DIN(torch.nn.Module):
                 model_dim=self.args.get("longer_model_dim", 2 * self.D),
                 max_len=1000,
                 group_size=self.args.get("longer_group_size", 4),
+                residual_init=self.args.get("longer_residual_init", 0.0),
             )
         elif self.longer_variant == "inner-trans":
             self.longer_lite = InnerTransTA(
@@ -83,6 +84,7 @@ class MUSE_DIN(torch.nn.Module):
                 transform_chunk_size=self.args.get(
                     "longer_transform_chunk_size", 50000
                 ),
+                residual_init=self.args.get("longer_residual_init", 0.0),
             )
         elif self.longer_variant == "global-token":
             self.longer_lite = GlobalTokenLongerLite(
@@ -96,6 +98,7 @@ class MUSE_DIN(torch.nn.Module):
                 transform_chunk_size=self.args.get(
                     "longer_transform_chunk_size", 50000
                 ),
+                residual_init=self.args.get("longer_residual_init", 0.0),
             )
         
         self.use_aux_loss = self.args["use_aux_loss"]

@@ -1,0 +1,8 @@
+{
+    "exp_name": "muse_low_lr_300_dev_1pct",
+    "max_train_steps": 300,
+    "max_eval_steps": 111,
+    "dense_lr": 0.00005,
+    "sparse_lr": 0.0005,
+    "save_ckpt": false
+}

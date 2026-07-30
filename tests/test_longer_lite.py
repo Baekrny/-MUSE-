@@ -48,6 +48,20 @@ def test_zero_residual_scale_preserves_base_interest_and_is_trainable():
     assert model.residual_scale.requires_grad
 
 
+def test_residual_scale_supports_small_nonzero_initialization():
+    model = GroupPoolTA(
+        input_dim=8,
+        model_dim=4,
+        max_len=8,
+        group_size=4,
+        residual_init=0.05,
+    )
+
+    torch.testing.assert_close(
+        model.residual_scale.detach(), torch.tensor(0.05)
+    )
+
+
 def test_inner_trans_merges_independent_groups_and_zeroes_padding():
     model = InnerTransTA(
         input_dim=4,

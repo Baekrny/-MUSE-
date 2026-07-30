@@ -1,6 +1,7 @@
 import torch
 
 from model.muse import MUSE_DIN
+from trainer import StagedLongerController
 
 
 def run_variant(use_short_sa_ta, use_horizon_gate):
@@ -73,6 +74,7 @@ def run_longer_variant(longer_variant):
         "longer_num_heads": 1,
         "longer_recent_queries": 2,
         "longer_transform_chunk_size": 2,
+        "longer_residual_init": 0.05 if longer_variant == "global-token" else 0.0,
     }
     model = MUSE_DIN(
         args=args,
@@ -134,10 +136,43 @@ def run_longer_variant(longer_variant):
     assert prop.shape == (batch_size, 2)
     assert torch.isfinite(prop).all()
     assert gradients and all(torch.isfinite(grad).all() for grad in gradients)
+    if longer_variant == "global-token":
+        torch.testing.assert_close(
+            model.longer_lite.residual_scale.detach(), torch.tensor(0.05)
+        )
     print(
         f"longer_variant={longer_variant} loss={loss.item():.6f} "
         f"prop_shape={tuple(prop.shape)} finite_backward=True"
     )
+
+
+def run_staged_controller_smoke():
+    class TinyDense(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = torch.nn.Linear(2, 2)
+            self.longer_lite = torch.nn.Linear(2, 2)
+
+    dense = TinyDense()
+    sparse = torch.nn.Linear(2, 2)
+    dense_opt = torch.optim.SGD(dense.parameters(), lr=0.2)
+    sparse_opt = torch.optim.SGD(sparse.parameters(), lr=0.3)
+    controller = StagedLongerController(
+        dense,
+        sparse,
+        dense_opt,
+        sparse_opt,
+        warmup_steps=1,
+        joint_dense_lr=0.05,
+        joint_sparse_lr=0.01,
+    )
+    controller.start()
+    assert all(parameter.requires_grad for parameter in dense.longer_lite.parameters())
+    assert not any(parameter.requires_grad for parameter in dense.backbone.parameters())
+    assert controller.maybe_transition(step=1)
+    assert all(parameter.requires_grad for parameter in dense.parameters())
+    assert all(parameter.requires_grad for parameter in sparse.parameters())
+    print("staged_controller=branch-only->joint transition=True")
 
 
 if __name__ == "__main__":
@@ -145,3 +180,4 @@ if __name__ == "__main__":
     run_variant(True, True)
     for variant in ("group-pool", "inner-trans", "global-token"):
         run_longer_variant(variant)
+    run_staged_controller_smoke()
